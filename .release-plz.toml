@@ -1,0 +1,3 @@
+[[package]]
+name = "mcp-plan"
+changelog_path = "./CHANGELOG.md"
