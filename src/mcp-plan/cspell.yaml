@@ -8,3 +8,6 @@ ignoreWords:
   - chrono
   - reqwest
   - readabilityrs
+  - sea-query
+  - sqlx
+  - schemars
