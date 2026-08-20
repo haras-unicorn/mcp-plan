@@ -2,7 +2,9 @@
   description = "MCP server that provides planning tooling";
 
   inputs = {
-    nixpkgs.url = "github:nixos/nixpkgs/release-26.05";
+    nixpkgs.url = "github:nixos/nixpkgs/nixos-26.05";
+
+    nixpkgs-unstable.url = "github:nixos/nixpkgs/nixos-unstable";
 
     flake-parts.url = "github:hercules-ci/flake-parts";
     flake-parts.inputs.nixpkgs-lib.follows = "nixpkgs";
@@ -17,6 +19,7 @@
     {
       self,
       nixpkgs,
+      nixpkgs-unstable,
       flake-parts,
       crane,
       ...
@@ -38,19 +41,7 @@
 
           cargoToml = builtins.fromTOML (builtins.readFile ./src/mcp-plan/Cargo.toml);
 
-          # TODO: uncomment or remove when implemented
-
-          # env = {
-          #   PKG_CONFIG_PATH = "${pkgs.openssl.dev}/lib/pkgconfig";
-          # };
-
-          # nativeBuildInputs = with pkgs; [
-          #   pkg-config
-          #   openssl
-          # ];
-
           commonArgs = {
-            # inherit nativeBuildInputs env;
             pname = cargoToml.package.name;
             version = cargoToml.package.version;
             src = craneLib.cleanCargoSource self;
@@ -73,8 +64,6 @@
             rust
             unwrapped
             vendor
-            # nativeBuildInputs
-            # env
             ;
           package =
             pkgs.callPackage
@@ -136,6 +125,11 @@
             '';
           };
 
+          sea-orm-cli =
+            (import nixpkgs-unstable {
+              system = pkgs.stdenv.hostPlatform.system;
+            }).sea-orm-cli;
+
           external = with pkgs; [
             flake-root
             git
@@ -156,6 +150,7 @@
             vscode-langservers-extracted
             yaml-language-server
             cargo-edit
+            sea-orm-cli
           ];
 
           devScriptText = pkgs.writeText "mcp-plan-dev.nu" ''
@@ -214,7 +209,6 @@
         {
           devShells = {
             default = pkgs.mkShell {
-              # inherit (packages) nativeBuildInputs env;
               packages = external ++ [
                 packages.rust
                 devScript

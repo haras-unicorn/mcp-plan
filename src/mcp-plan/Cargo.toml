@@ -9,6 +9,31 @@ readme = "../../README.md"
 edition = "2024"
 
 [dependencies]
-anyhow = "1"
-rmcp = { version = "3.1.2", features = ["transport-io"] }
-tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+anyhow = "1.0.104"
+chrono = { version = "0.4.45", features = ["serde"] }
+clap = { version = "4.6.6", features = ["derive"] }
+config = "0.15.25"
+rmcp = { version = "3.1.4", features = ["transport-io"] }
+sea-orm = { version = "2.0.2", features = [
+  "sqlx-sqlite",
+  "runtime-tokio",
+  "macros",
+  "with-chrono",
+  "with-uuid",
+  "serde",
+] }
+sea-orm-migration = { version = "2.0.2", features = [
+  "runtime-tokio",
+  "sqlx-sqlite",
+  "with-chrono",
+  "with-uuid",
+] }
+serde = { version = "1.0.229", features = ["derive"] }
+tokio = { version = "1.53.1", features = ["macros", "rt-multi-thread"] }
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = [
+  "env-filter",
+  "fmt",
+  "std",
+] }
+uuid = { version = "1.24.1", features = ["v4", "serde"] }
