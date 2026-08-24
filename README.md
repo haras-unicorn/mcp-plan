@@ -182,14 +182,18 @@ MCP_PLAN__RUNTIME__TPS_IN=1000 mcp-plan
 
 ### Logging
 
-Log verbosity is controlled via `RUST_LOG` (default `info`):
+Logs are emitted as newline-delimited JSON on **stderr**, keeping stdout
+exclusively for the MCP JSON-RPC protocol. Each line carries a `level`,
+`timestamp`, `target`, a human-readable `message`, and structured fields (e.g.
+`task_id`, `duration_ms`) that are safe to query with `jq`:
 
 ```sh
-RUST_LOG=debug mcp-plan
+RUST_LOG=debug mcp-plan 2> >(jq -r '"\(.level): \(.message)"')
 ```
 
-Any standard tracing filter is accepted (`error`, `warn`, `info`, `debug`,
-`trace`, per-target filters, etc.).
+Log verbosity is controlled via `RUST_LOG` (default `info`). Any standard
+tracing filter is accepted (`error`, `warn`, `info`, `debug`, `trace`,
+per-target filters, etc.).
 
 ### Database
 

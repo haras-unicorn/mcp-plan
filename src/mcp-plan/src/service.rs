@@ -155,6 +155,14 @@ impl Service {
     am.status = ActiveValue::Set(status.as_str().to_owned());
     am.updated_at = ActiveValue::Set(Some(Utc::now()));
     let saved = am.update(&self.db).await?;
+    if status == TaskStatus::Escalated {
+      tracing::warn!(
+        task_id,
+        retries,
+        max_retries = limit,
+        "task escalated after exhausting retries"
+      );
+    }
     Ok(Task::from(saved))
   }
 
@@ -204,8 +212,7 @@ impl Service {
   /// type (planning → ready), bounded by `config.queue_limit`.
   pub async fn queue(&self) -> Result<Vec<QueuedTask>, ServiceError> {
     let config = &self.config.runtime;
-    let max_retries =
-      i32::try_from(config.max_retries).unwrap_or(i32::MAX);
+    let max_retries = i32::try_from(config.max_retries).unwrap_or(i32::MAX);
     let models = tasks::Entity::find()
       .filter(
         Condition::all()
@@ -215,15 +222,18 @@ impl Service {
       .all(&self.db)
       .await?;
 
+    let mut escalated: Vec<String> = Vec::new();
     let mut result: Vec<QueuedTask> = Vec::with_capacity(models.len());
     for model in models {
       if model.status == TaskStatus::Failure.as_str()
         && model.retries >= max_retries
       {
+        let id = model.id.clone();
         let mut am: tasks::ActiveModel = model.into();
         am.status = ActiveValue::Set(TaskStatus::Escalated.as_str().to_owned());
         am.updated_at = ActiveValue::Set(Some(Utc::now()));
         am.update(&self.db).await?;
+        escalated.push(id);
         continue;
       }
 
@@ -247,7 +257,20 @@ impl Service {
         .then_with(|| a.task.id.cmp(&b.task.id))
     });
 
+    let total = result.len();
     result.truncate(config.queue_limit);
+    let returned = result.len();
+    let truncated = total.saturating_sub(returned);
+    tracing::debug!(
+      returned,
+      truncated,
+      escalated = escalated.len(),
+      queue_limit = config.queue_limit,
+      message = "computed task queue"
+    );
+    for id in &escalated {
+      tracing::warn!(task_id = id, max_retries, "task escalated during queue");
+    }
     Ok(result)
   }
 
@@ -276,10 +299,7 @@ impl Service {
 
 /// Compute the expected wall-clock duration of a task from its token
 /// estimates and the configured throughput (see design.md).
-pub fn calculate_duration(
-  model: &tasks::Model,
-  config: &RuntimeConfig,
-) -> u64 {
+pub fn calculate_duration(model: &tasks::Model, config: &RuntimeConfig) -> u64 {
   let tps_in = i64::try_from(config.tps_in).unwrap_or(i64::MAX).max(1);
   let tps_out = i64::try_from(config.tps_out).unwrap_or(i64::MAX).max(1);
 
@@ -370,8 +390,7 @@ mod tests {
   #[tokio::test]
   async fn insert_and_fetch() {
     let service = new().await;
-    let id =
-      seed_with_tokens(&service, "root", Some(100), None).await;
+    let id = seed_with_tokens(&service, "root", Some(100), None).await;
     let fetched = service.task(&id).await.expect("fetch").expect("some");
     assert_eq!(fetched.title, "root");
     assert_eq!(fetched.status, TaskStatus::Ready);
@@ -416,8 +435,7 @@ mod tests {
       .await
       .expect("child b");
 
-    let roots: Vec<TaskSummary> =
-      service.children(None).await.expect("roots");
+    let roots: Vec<TaskSummary> = service.children(None).await.expect("roots");
     assert_eq!(roots.len(), 1);
     assert_eq!(roots[0].id, root);
 
@@ -483,13 +501,8 @@ mod tests {
   async fn queue_sorts_and_classifies() {
     let service = new().await;
     // Long task -> planning
-    let p_id = seed_with_tokens(
-      &service,
-      "planning",
-      Some(60_000),
-      Some(10_000),
-    )
-    .await;
+    let p_id =
+      seed_with_tokens(&service, "planning", Some(60_000), Some(10_000)).await;
     // Short low-priority
     let e_id = seed_with_tokens(&service, "execution", Some(10), None).await;
 

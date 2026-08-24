@@ -19,17 +19,27 @@ async fn main() -> anyhow::Result<()> {
   log::init();
 
   let (cli, command) = config::Cli::parse_command();
+  tracing::debug!(?command, config = %cli.resolve_config_path().display(), "parsed command and configuration");
   let config = cli.load_config()?;
 
+  match &command {
+    config::Command::Run => {}
+    config::Command::Migrate => {}
+    config::Command::Schema { .. } => {}
+  }
   match command {
     config::Command::Run => {
+      tracing::info!("starting mcp-plan server");
       let db = connect::connect(&config).await?;
       let service = Service::new(db, Arc::new(config));
       let server = PlanServer { service };
       let service = server.serve(stdio()).await?;
+      tracing::info!("mcp-plan server served over stdio");
       service.waiting().await?;
+      tracing::info!("shutting down mcp-plan server");
     }
     config::Command::Migrate => {
+      tracing::info!("running database migrations");
       let db = connect::connect(&config).await?;
       drop(db);
       tracing::info!("Migrations completed successfully.");
