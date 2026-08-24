@@ -21,8 +21,10 @@ nix build github:haras-unicorn/mcp-plan
 ### Releases
 
 Prebuilt binaries for `x86_64-linux` and `aarch64-linux`, for each supported
-database backend (`sqlite`, `postgres`, `mysql`), are attached to each [GitHub
-release] as tarballs containing the `mcp-plan` binary.
+database backend (`sqlite`, `postgres`, `mysql` or all), are attached to each
+[GitHub release] as tarballs containing the `mcp-plan` binary.
+
+To run with a specific backend (in this example `sqlite`) from releases:
 
 ```sh
 curl -L -o mcp-plan.tar.gz \
@@ -31,11 +33,22 @@ tar -xzf mcp-plan.tar.gz
 ./mcp-plan-x86_64-linux-sqlite
 ```
 
+To run with a binary supporting all backends from releases:
+
+```sh
+curl -L -o mcp-plan.tar.gz \
+  https://github.com/haras-unicorn/mcp-plan/releases/latest/download/mcp-plan-x86_64-linux.tar.gz
+tar -xzf mcp-plan.tar.gz
+./mcp-plan-x86_64-linux
+```
+
 Pick the archive matching your backend:
 
+- `mcp-plan-x86_64-linux.tar.gz` (all backends)
 - `mcp-plan-x86_64-linux-sqlite.tar.gz`
 - `mcp-plan-x86_64-linux-postgres.tar.gz`
 - `mcp-plan-x86_64-linux-mysql.tar.gz`
+- `mcp-plan-aarch64-linux.tar.gz` (all backends)
 - `mcp-plan-aarch64-linux-{sqlite,postgres,mysql}.tar.gz`
 
 [GitHub release]: https://github.com/haras-unicorn/mcp-plan/releases

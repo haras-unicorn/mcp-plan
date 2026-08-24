@@ -10,7 +10,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        backend: [sqlite, postgres, mysql]
+        backend: ["", "-sqlite", "-postgres", "-mysql"]
         include:
           - arch: x86_64-linux
             runner: ubuntu-latest
@@ -25,12 +25,12 @@ jobs:
           name: haras
           authToken: "${{ secrets.CACHIX_AUTH_TOKEN }}"
       - run: |
-          nix build --show-trace ".#mcp-plan-unwrapped-${{ matrix.backend }}"
+          nix build --show-trace ".#mcp-plan-unwrapped${{ matrix.backend }}"
           mkdir -p release
-          cp -L result/bin/mcp-plan "release/mcp-plan-${{ matrix.arch }}-${{ matrix.backend }}"
-          tar -czf "mcp-plan-${{ matrix.arch }}-${{ matrix.backend }}.tar.gz" \
-            -C release "mcp-plan-${{ matrix.arch }}-${{ matrix.backend }}"
+          cp -L result/bin/mcp-plan "release/mcp-plan-${{ matrix.arch }}${{ matrix.backend }}"
+          tar -czf "mcp-plan-${{ matrix.arch }}${{ matrix.backend }}.tar.gz" \
+            -C release "mcp-plan-${{ matrix.arch }}${{ matrix.backend }}"
       - env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release upload "$GITHUB_REF_NAME" mcp-plan-${{ matrix.arch }}-${{ matrix.backend }}.tar.gz --clobber
+          gh release upload "$GITHUB_REF_NAME" mcp-plan-${{ matrix.arch }}${{ matrix.backend }}.tar.gz --clobber

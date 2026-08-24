@@ -117,6 +117,7 @@ mod tests {
     Ok(())
   }
 
+  #[cfg(feature = "sqlite")]
   #[tokio::test]
   async fn migrate_up_and_down_sqlite() -> Result<(), Box<dyn std::error::Error>>
   {
@@ -128,6 +129,11 @@ mod tests {
   #[tokio::test]
   async fn migrate_up_and_down_postgres()
   -> Result<(), Box<dyn std::error::Error>> {
+    if !crate::test::docker_available().await {
+      eprintln!("docker is not available, skipping postgres test");
+      return Ok(());
+    }
+
     use testcontainers_modules::postgres::Postgres;
     use testcontainers_modules::testcontainers::runners::AsyncRunner;
 
@@ -145,6 +151,11 @@ mod tests {
   #[tokio::test]
   async fn migrate_up_and_down_mysql() -> Result<(), Box<dyn std::error::Error>>
   {
+    if !crate::test::docker_available().await {
+      eprintln!("docker is not available, skipping mysql test");
+      return Ok(());
+    }
+
     use testcontainers_modules::mysql::Mysql;
     use testcontainers_modules::testcontainers::runners::AsyncRunner;
 
