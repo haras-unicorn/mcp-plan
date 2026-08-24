@@ -13,3 +13,7 @@ ignoreWords:
   - pkgs
   - cachix
   - substituters
+  - sqlite
+  - postgres
+  - mysql
+  - sslmode

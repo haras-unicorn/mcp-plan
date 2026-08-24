@@ -20,15 +20,23 @@ nix build github:haras-unicorn/mcp-plan
 
 ### Releases
 
-Prebuilt binaries for `x86_64-linux` and `aarch64-linux` are attached to each
-[GitHub release] as tarballs containing the `mcp-plan` binary.
+Prebuilt binaries for `x86_64-linux` and `aarch64-linux`, for each supported
+database backend (`sqlite`, `postgres`, `mysql`), are attached to each [GitHub
+release] as tarballs containing the `mcp-plan` binary.
 
 ```sh
 curl -L -o mcp-plan.tar.gz \
-  https://github.com/haras-unicorn/mcp-plan/releases/latest/download/mcp-plan-x86_64-linux.tar.gz
+  https://github.com/haras-unicorn/mcp-plan/releases/latest/download/mcp-plan-x86_64-linux-sqlite.tar.gz
 tar -xzf mcp-plan.tar.gz
-./mcp-plan-x86_64-linux
+./mcp-plan-x86_64-linux-sqlite
 ```
+
+Pick the archive matching your backend:
+
+- `mcp-plan-x86_64-linux-sqlite.tar.gz`
+- `mcp-plan-x86_64-linux-postgres.tar.gz`
+- `mcp-plan-x86_64-linux-mysql.tar.gz`
+- `mcp-plan-aarch64-linux-{sqlite,postgres,mysql}.tar.gz`
 
 [GitHub release]: https://github.com/haras-unicorn/mcp-plan/releases
 
@@ -124,7 +132,91 @@ instead:
 }
 ```
 
+## Configuration
+
+`mcp-plan` reads its configuration from `config.toml` in the working directory,
+overlaid with `MCP_PLAN_*` environment variables. Every setting is optional. The
+full schema and a worked example live in the [References](#references) section.
+
+### Command line
+
+The binary accepts a subcommand:
+
+- `mcp-plan` / `mcp-plan run` — start the MCP server over stdio (default).
+- `mcp-plan migrate` — open the database and apply pending migrations, then
+  exit.
+- `mcp-plan schema` — write the configuration JSON schema to `--output`.
+
+`--config <path>` is a global flag selecting a different configuration file
+(defaults to `config.toml`), for example:
+
+```sh
+mcp-plan --config ./prod.toml migrate
+```
+
+### Configuration file
+
+```toml
+[database]
+url = "sqlite:data/mcp-plan.db"
+```
+
+The file is split into three sections:
+
+- `database` — the database `url`. See below for the supported schemes.
+- `runtime` — `tps_in`, `tps_out`, `max_task_duration_secs`, `queue_limit`,
+  `max_retries`.
+- `sources` — a list of statically configured sources.
+
+See the JSON schema and the example for the exact keys and defaults (References
+below).
+
+### Environment
+
+Environment variables override file values. Use the `MCP_PLAN` prefix with `__`
+as the section separator:
+
+```sh
+MCP_PLAN__RUNTIME__TPS_IN=1000 mcp-plan
+```
+
+### Logging
+
+Log verbosity is controlled via `RUST_LOG` (default `info`):
+
+```sh
+RUST_LOG=debug mcp-plan
+```
+
+Any standard tracing filter is accepted (`error`, `warn`, `info`, `debug`,
+`trace`, per-target filters, etc.).
+
+### Database
+
+`database.url` selects the backend by scheme:
+
+- `sqlite:data/mcp-plan.db` — a SQLite file. The parent directory is created on
+  first start. Use `sqlite::memory:` for an in-memory database.
+- `postgres://user:password@host:port/database` — PostgreSQL.
+- `mysql://user:password@host:port/database` — MySQL.
+
+Each binary is built against a single backend (`sqlite` by default, or the
+`postgres`/`mysql` build variants from the releases).
+
+Both `run` and `migrate` connect to the database and apply pending migrations at
+startup; `migrate` exits immediately afterwards so migrations can be run as a
+separate init step (e.g. in multi-tenant deployments). SQLite runs in WAL mode
+with foreign keys enabled.
+
 <!-- ANCHOR_END: body -->
+
+## References
+
+The JSON schema and an example configuration are generated and versioned under
+`assets`:
+
+- [assets/config.schema.json](./assets/config.schema.json)
+- [assets/config.example.toml](./assets/config.example.toml)
 
 ## Documentation
 

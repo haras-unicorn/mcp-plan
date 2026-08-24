@@ -1,0 +1,49 @@
+[package]
+name = "mcp-plan"
+version = "0.1.0"
+description = "MCP server that provides planning tooling."
+repository = "https://github.com/haras-unicorn/mcp-plan"
+authors = ["haras-unicorn <github@haras-unicorn.net>"]
+license-file = "../../LICENSE.md"
+readme = "../../README.md"
+edition = "2024"
+
+[features]
+default = ["sqlite"]
+sqlite = ["sea-orm/sqlx-sqlite", "sea-orm-migration/sqlx-sqlite"]
+postgres = ["sea-orm/sqlx-postgres", "sea-orm-migration/sqlx-postgres"]
+mysql = ["sea-orm/sqlx-mysql", "sea-orm-migration/sqlx-mysql"]
+
+[dependencies]
+anyhow = "1.0.104"
+chrono = { version = "0.4.45", features = ["serde"] }
+clap = { version = "4.6.6", features = ["derive"] }
+config = "0.15.25"
+rmcp = { version = "3.1.4", features = ["transport-io", "schemars"] }
+sea-orm = { version = "2.0.2", default-features = false, features = [
+  "macros",
+  "runtime-tokio-native-tls",
+  "with-chrono",
+  "with-uuid",
+  "serde",
+] }
+sea-orm-migration = { version = "2.0.2", default-features = false, features = [
+  "runtime-tokio-native-tls",
+  "with-chrono",
+  "with-uuid",
+] }
+serde = { version = "1.0.229", features = ["derive"] }
+tokio = { version = "1.53.1", features = ["macros", "rt-multi-thread"] }
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = [
+  "env-filter",
+  "fmt",
+  "std",
+] }
+uuid = { version = "1.24.1", features = ["v4", "serde"] }
+
+[dev-dependencies]
+testcontainers-modules = { version = "0.15.0", features = [
+  "postgres",
+  "mysql",
+] }

@@ -1,0 +1,34 @@
+# mcp-plan configuration.
+#
+# Copy this file to `config.toml` (the default location) and adjust as needed.
+# Every key is optional; the values below show the defaults.
+#
+# Environment overrides use the `MCP_PLAN` prefix with `__` as the section
+# separator, e.g. `MCP_PLAN__RUNTIME__TPS_IN=1000`.
+
+[database]
+# Database URL. Any of the supported backends:
+#   sqlite:data/mcp-plan.db
+#   sqlite::memory:
+#   postgres://user:password@host:5432/database
+#   mysql://user:password@host:3306/database
+url = "sqlite:data/mcp-plan.db"
+
+[runtime]
+# Estimated model throughput, tokens per second.
+tps_in = 800
+tps_out = 28
+# If the estimated duration of a task exceeds this it is flagged for planning.
+max_task_duration_secs = 600
+# Upper bound for the list returned by `queue()`.
+queue_limit = 20
+# A task is escalated once its retry count reaches this value.
+max_retries = 3
+
+# Sources are configured statically and synced into the `sources` table.
+# `type` is either "manual" or "poll".
+[[sources]]
+id = "gh-issues"
+title = "GitHub issues"
+description = "Fetch open issues and insert them as tasks."
+type = "poll"
