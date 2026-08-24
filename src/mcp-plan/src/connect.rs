@@ -9,6 +9,8 @@ use std::path::PathBuf;
 /// url targets sqlite, then apply any pending migrations.
 pub async fn connect(config: &Config) -> anyhow::Result<DatabaseConnection> {
   let url = &config.database.url;
+  let backend = crate::log::backend_label(url);
+  tracing::debug!(backend, "opening database");
 
   #[cfg(feature = "sqlite")]
   if is_sqlite(url) && !is_sqlite_memory(url) {
@@ -17,7 +19,7 @@ pub async fn connect(config: &Config) -> anyhow::Result<DatabaseConnection> {
 
   let db = sea_orm::Database::connect(url)
     .await
-    .with_context(|| format!("failed to connect to database at `{url}`"))?;
+    .with_context(|| format!("failed to connect to `{backend}` database"))?;
 
   #[cfg(feature = "sqlite")]
   if is_sqlite(url) {
@@ -26,7 +28,7 @@ pub async fn connect(config: &Config) -> anyhow::Result<DatabaseConnection> {
   }
 
   Migrator::up(&db, None).await?;
-  tracing::debug!("database ready");
+  tracing::debug!(backend, "database ready");
   Ok(db)
 }
 
