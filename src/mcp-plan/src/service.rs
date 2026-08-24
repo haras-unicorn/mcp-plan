@@ -335,7 +335,10 @@ mod tests {
   use super::*;
   use crate::config::DatabaseConfig;
   use crate::migration::Migrator;
+  use sea_orm::DatabaseConnection;
   use sea_orm_migration::MigratorTrait;
+  #[cfg(any(feature = "postgres", feature = "mysql"))]
+  use testcontainers_modules::testcontainers::runners::AsyncRunner;
 
   fn config() -> RuntimeConfig {
     RuntimeConfig {
@@ -347,17 +350,121 @@ mod tests {
     }
   }
 
-  async fn new() -> Service {
-    let db = sea_orm::Database::connect("sqlite::memory:")
-      .await
-      .expect("db");
-    Migrator::up(&db, None).await.expect("migrate");
+  /// A live database environment for the service tests. The container handle
+  /// (when present) is kept alive for the whole test so the backend stays up.
+  struct TestEnv {
+    service: Service,
+    #[cfg(feature = "postgres")]
+    _postgres: Option<
+      testcontainers_modules::testcontainers::ContainerAsync<
+        testcontainers_modules::postgres::Postgres,
+      >,
+    >,
+    #[cfg(feature = "mysql")]
+    _mysql: Option<
+      testcontainers_modules::testcontainers::ContainerAsync<
+        testcontainers_modules::mysql::Mysql,
+      >,
+    >,
+  }
+
+  fn service_with(db: DatabaseConnection) -> Service {
     let config = Config {
       database: DatabaseConfig::default(),
       runtime: config(),
       sources: Vec::new(),
     };
     Service::new(db, Arc::new(config))
+  }
+
+  async fn connect_and_migrate(url: &str) -> DatabaseConnection {
+    let db = sea_orm::Database::connect(url)
+      .await
+      .expect("db connection");
+    Migrator::up(&db, None).await.expect("migrate");
+    db
+  }
+
+  /// A sqlite in-memory environment, available whenever the `sqlite` feature
+  /// is compiled.
+  #[cfg(feature = "sqlite")]
+  async fn sqlite_env() -> TestEnv {
+    let db = connect_and_migrate("sqlite::memory:").await;
+    TestEnv {
+      service: service_with(db),
+      #[cfg(feature = "postgres")]
+      _postgres: None,
+      #[cfg(feature = "mysql")]
+      _mysql: None,
+    }
+  }
+
+  /// A postgres environment backed by a live container, or `None` when docker
+  /// is unavailable.
+  #[cfg(feature = "postgres")]
+  async fn postgres_env() -> Option<TestEnv> {
+    use testcontainers_modules::postgres::Postgres;
+
+    if !crate::test::docker_available().await {
+      eprintln!("docker is not available, skipping postgres service tests");
+      return None;
+    }
+    let container = Postgres::default().start().await.ok()?;
+    let url = format!(
+      "postgres://postgres:postgres@{}:{}/postgres",
+      container.get_host().await.ok()?,
+      container.get_host_port_ipv4(5432).await.ok()?
+    );
+    let db = connect_and_migrate(&url).await;
+    Some(TestEnv {
+      service: service_with(db),
+      _postgres: Some(container),
+      #[cfg(feature = "mysql")]
+      _mysql: None,
+    })
+  }
+
+  /// A mysql environment backed by a live container, or `None` when docker is
+  /// unavailable.
+  #[cfg(feature = "mysql")]
+  async fn mysql_env() -> Option<TestEnv> {
+    use testcontainers_modules::mysql::Mysql;
+
+    if !crate::test::docker_available().await {
+      eprintln!("docker is not available, skipping mysql service tests");
+      return None;
+    }
+    let container = Mysql::default().start().await.ok()?;
+    let url = format!(
+      "mysql://root@{}:{}/test",
+      container.get_host().await.ok()?,
+      container.get_host_port_ipv4(3306).await.ok()?
+    );
+    let db = connect_and_migrate(&url).await;
+    Some(TestEnv {
+      service: service_with(db),
+      _mysql: Some(container),
+      #[cfg(feature = "postgres")]
+      _postgres: None,
+    })
+  }
+
+  /// Every environment enabled by the compiled features. sqlite is always
+  /// included when the feature is on; postgres/mysql are included when their
+  /// feature is enabled and docker is reachable.
+  async fn environments() -> Vec<TestEnv> {
+    let mut envs = Vec::new();
+    #[cfg(feature = "sqlite")]
+    envs.push(sqlite_env().await);
+    #[cfg(feature = "postgres")]
+    if let Some(env) = postgres_env().await {
+      envs.push(env);
+    }
+    #[cfg(feature = "mysql")]
+    if let Some(env) = mysql_env().await {
+      envs.push(env);
+    }
+    envs
   }
 
   async fn seed_root(service: &Service, title: &str) -> String {
@@ -389,181 +496,200 @@ mod tests {
 
   #[tokio::test]
   async fn insert_and_fetch() {
-    let service = new().await;
-    let id = seed_with_tokens(&service, "root", Some(100), None).await;
-    let fetched = service.task(&id).await.expect("fetch").expect("some");
-    assert_eq!(fetched.title, "root");
-    assert_eq!(fetched.status, TaskStatus::Ready);
-    assert_eq!(fetched.priority, TaskPriority::Medium);
-    assert_eq!(fetched.retries, 0);
-    assert!(fetched.created_at.is_some());
-    assert!(fetched.updated_at.is_some());
+    for env in environments().await {
+      let service = &env.service;
+      let id = seed_with_tokens(service, "root", Some(100), None).await;
+      let fetched = service.task(&id).await.expect("fetch").expect("some");
+      assert_eq!(fetched.title, "root");
+      assert_eq!(fetched.status, TaskStatus::Ready);
+      assert_eq!(fetched.priority, TaskPriority::Medium);
+      assert_eq!(fetched.retries, 0);
+      assert!(fetched.created_at.is_some());
+      assert!(fetched.updated_at.is_some());
+    }
   }
 
   #[tokio::test]
   async fn root_children_and_scoped_children() {
-    let service = new().await;
-    let root = seed_root(&service, "root").await;
-    let child_a = service
-      .insert(
-        NewTask {
-          title: "a".to_owned(),
-          description: "".to_owned(),
-          priority: TaskPriority::High,
-          source_id: None,
-          estimated_tokens_in: None,
-          estimated_tokens_reasoning: None,
-          estimated_tokens_out: None,
-        },
-        Some(&root),
-      )
-      .await
-      .expect("child a");
-    let child_b = service
-      .insert(
-        NewTask {
-          title: "b".to_owned(),
-          description: "".to_owned(),
-          priority: TaskPriority::Low,
-          source_id: None,
-          estimated_tokens_in: None,
-          estimated_tokens_reasoning: None,
-          estimated_tokens_out: None,
-        },
-        Some(&root),
-      )
-      .await
-      .expect("child b");
+    for env in environments().await {
+      let service = &env.service;
+      let root = seed_root(service, "root").await;
+      let child_a = service
+        .insert(
+          NewTask {
+            title: "a".to_owned(),
+            description: "".to_owned(),
+            priority: TaskPriority::High,
+            source_id: None,
+            estimated_tokens_in: None,
+            estimated_tokens_reasoning: None,
+            estimated_tokens_out: None,
+          },
+          Some(&root),
+        )
+        .await
+        .expect("child a");
+      let child_b = service
+        .insert(
+          NewTask {
+            title: "b".to_owned(),
+            description: "".to_owned(),
+            priority: TaskPriority::Low,
+            source_id: None,
+            estimated_tokens_in: None,
+            estimated_tokens_reasoning: None,
+            estimated_tokens_out: None,
+          },
+          Some(&root),
+        )
+        .await
+        .expect("child b");
 
-    let roots: Vec<TaskSummary> = service.children(None).await.expect("roots");
-    assert_eq!(roots.len(), 1);
-    assert_eq!(roots[0].id, root);
+      let roots: Vec<TaskSummary> =
+        service.children(None).await.expect("roots");
+      assert_eq!(roots.len(), 1);
+      assert_eq!(roots[0].id, root);
 
-    let kids: Vec<TaskSummary> =
-      service.children(Some(&root)).await.expect("kids");
-    assert_eq!(kids.len(), 2);
-    let by_title: std::collections::HashMap<String, &TaskSummary> =
-      kids.iter().map(|k| (k.title.clone(), k)).collect();
-    assert_eq!(by_title["a"].id, child_a);
-    assert_eq!(by_title["b"].id, child_b);
+      let kids: Vec<TaskSummary> =
+        service.children(Some(&root)).await.expect("kids");
+      assert_eq!(kids.len(), 2);
+      let by_title: std::collections::HashMap<String, &TaskSummary> =
+        kids.iter().map(|k| (k.title.clone(), k)).collect();
+      assert_eq!(by_title["a"].id, child_a);
+      assert_eq!(by_title["b"].id, child_b);
+    }
   }
 
   #[tokio::test]
   async fn complete_sets_status() {
-    let service = new().await;
-    let id = seed_root(&service, "root").await;
-    let _ = service
-      .complete(&id, TaskStatus::Success)
-      .await
-      .expect("complete");
-    let fetched = service.task(&id).await.expect("fetch").expect("some");
-    assert_eq!(fetched.status, TaskStatus::Success);
+    for env in environments().await {
+      let service = &env.service;
+      let id = seed_root(service, "root").await;
+      let _ = service
+        .complete(&id, TaskStatus::Success)
+        .await
+        .expect("complete");
+      let fetched = service.task(&id).await.expect("fetch").expect("some");
+      assert_eq!(fetched.status, TaskStatus::Success);
+    }
   }
 
   #[tokio::test]
   async fn fail_increments_and_escalates_at_limit() {
-    let service = new().await;
-    let id = seed_root(&service, "root").await;
+    for env in environments().await {
+      let service = &env.service;
+      let id = seed_root(service, "root").await;
 
-    let f1 = service.fail(&id).await.expect("fail 1");
-    assert_eq!(f1.retries, 1);
-    assert_eq!(f1.status, TaskStatus::Failure);
+      let f1 = service.fail(&id).await.expect("fail 1");
+      assert_eq!(f1.retries, 1);
+      assert_eq!(f1.status, TaskStatus::Failure);
 
-    let f2 = service.fail(&id).await.expect("fail 2");
-    assert_eq!(f2.retries, 2);
-    assert_eq!(f2.status, TaskStatus::Escalated);
+      let f2 = service.fail(&id).await.expect("fail 2");
+      assert_eq!(f2.retries, 2);
+      assert_eq!(f2.status, TaskStatus::Escalated);
+    }
   }
 
   #[tokio::test]
   async fn ready_updates_fields_and_status() {
-    let service = new().await;
-    let id = seed_root(&service, "root").await;
-    let updated = service
-      .ready(
-        &id,
-        TaskUpdate {
-          title: Some("renamed".to_owned()),
-          priority: Some(TaskPriority::Critical),
-          estimated_tokens_in: Some(5000),
-          estimated_tokens_out: Some(2000),
-          ..TaskUpdate::default()
-        },
-      )
-      .await
-      .expect("ready");
-    assert_eq!(updated.title, "renamed");
-    assert_eq!(updated.priority, TaskPriority::Critical);
-    assert_eq!(updated.status, TaskStatus::Ready);
-    assert_eq!(updated.estimated_tokens_in, Some(5000));
+    for env in environments().await {
+      let service = &env.service;
+      let id = seed_root(service, "root").await;
+      let updated = service
+        .ready(
+          &id,
+          TaskUpdate {
+            title: Some("renamed".to_owned()),
+            priority: Some(TaskPriority::Critical),
+            estimated_tokens_in: Some(5000),
+            estimated_tokens_out: Some(2000),
+            ..TaskUpdate::default()
+          },
+        )
+        .await
+        .expect("ready");
+      assert_eq!(updated.title, "renamed");
+      assert_eq!(updated.priority, TaskPriority::Critical);
+      assert_eq!(updated.status, TaskStatus::Ready);
+      assert_eq!(updated.estimated_tokens_in, Some(5000));
+    }
   }
 
   #[tokio::test]
   async fn queue_sorts_and_classifies() {
-    let service = new().await;
-    // Long task -> planning
-    let p_id =
-      seed_with_tokens(&service, "planning", Some(60_000), Some(10_000)).await;
-    // Short low-priority
-    let e_id = seed_with_tokens(&service, "execution", Some(10), None).await;
+    for env in environments().await {
+      let service = &env.service;
+      // Long task -> planning
+      let p_id =
+        seed_with_tokens(service, "planning", Some(60_000), Some(10_000)).await;
+      // Short low-priority
+      let e_id = seed_with_tokens(service, "execution", Some(10), None).await;
 
-    let queued = service.queue().await.expect("queue");
-    assert_eq!(queued.len(), 2);
-    let kinds: Vec<TaskType> = queued.iter().map(|q| q.kind).collect();
-    assert!(kinds.contains(&TaskType::Planning));
-    assert!(kinds.contains(&TaskType::Execution));
-    // Planning (long) should sort before execution; same priority, planning first.
-    let ids: Vec<&str> = queued.iter().map(|q| q.task.id.as_str()).collect();
-    assert_eq!(ids[0], p_id);
-    assert_eq!(ids[1], e_id);
+      let queued = service.queue().await.expect("queue");
+      assert_eq!(queued.len(), 2);
+      let kinds: Vec<TaskType> = queued.iter().map(|q| q.kind).collect();
+      assert!(kinds.contains(&TaskType::Planning));
+      assert!(kinds.contains(&TaskType::Execution));
+      // Planning (long) should sort before execution; same priority, planning first.
+      let ids: Vec<&str> = queued.iter().map(|q| q.task.id.as_str()).collect();
+      assert_eq!(ids[0], p_id);
+      assert_eq!(ids[1], e_id);
+    }
   }
 
   #[tokio::test]
   async fn queue_excludes_success_and_escalated() {
-    let service = new().await;
-    let done = seed_root(&service, "done").await;
-    let esc = seed_root(&service, "esc").await;
-    let _ = service
-      .complete(&done, TaskStatus::Success)
-      .await
-      .expect("done");
-    let _ = service.escalate(&esc).await.expect("esc");
-    let _ = seed_root(&service, "active").await;
+    for env in environments().await {
+      let service = &env.service;
+      let done = seed_root(service, "done").await;
+      let esc = seed_root(service, "esc").await;
+      let _ = service
+        .complete(&done, TaskStatus::Success)
+        .await
+        .expect("done");
+      let _ = service.escalate(&esc).await.expect("esc");
+      let _ = seed_root(service, "active").await;
 
-    let queued = service.queue().await.expect("queue");
-    assert_eq!(queued.len(), 1);
-    assert_eq!(queued[0].task.title, "active");
+      let queued = service.queue().await.expect("queue");
+      assert_eq!(queued.len(), 1);
+      assert_eq!(queued[0].task.title, "active");
+    }
   }
 
   #[tokio::test]
   async fn queue_truncates_to_limit() {
-    let service = new().await;
-    for i in 0..25 {
-      seed_root(&service, &format!("t{i}")).await;
+    for env in environments().await {
+      let service = &env.service;
+      for i in 0..25 {
+        seed_root(service, &format!("t{i}")).await;
+      }
+      let queued = service.queue().await.expect("queue");
+      assert_eq!(queued.len(), 10);
     }
-    let queued = service.queue().await.expect("queue");
-    assert_eq!(queued.len(), 10);
   }
 
   #[tokio::test]
   async fn queue_escalates_exhausted_failures() {
-    let service = new().await;
-    let id = seed_root(&service, "sick").await;
+    for env in environments().await {
+      let service = &env.service;
+      let id = seed_root(service, "sick").await;
 
-    use sea_orm::Set;
-    let model = service.load(&id).await.expect("load");
-    let mut am: tasks::ActiveModel = model.into();
-    am.retries = Set(2);
-    am.status = Set("failure".to_owned());
-    am.update(&service.db).await.expect("update");
+      use sea_orm::Set;
+      let model = service.load(&id).await.expect("load");
+      let mut am: tasks::ActiveModel = model.into();
+      am.retries = Set(2);
+      am.status = Set("failure".to_owned());
+      am.update(&service.db).await.expect("update");
 
-    let queued = service.queue().await.expect("queue");
-    assert!(
-      queued.is_empty(),
-      "exhausted failure should be escalated out of the queue"
-    );
+      let queued = service.queue().await.expect("queue");
+      assert!(
+        queued.is_empty(),
+        "exhausted failure should be escalated out of the queue"
+      );
 
-    let fetched = service.load(&id).await.expect("fetch");
-    assert_eq!(fetched.status, "escalated");
+      let fetched = service.load(&id).await.expect("fetch");
+      assert_eq!(fetched.status, "escalated");
+    }
   }
 
   #[test]

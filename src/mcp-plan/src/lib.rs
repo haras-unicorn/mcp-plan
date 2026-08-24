@@ -21,6 +21,9 @@ pub mod migration;
 pub mod models;
 pub mod service;
 
+#[cfg(test)]
+pub mod test;
+
 pub use migration::{MigrationRunner, Migrator};
 
 use models::{NewTask, TaskStatus, TaskUpdate};

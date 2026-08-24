@@ -56,33 +56,35 @@
 
           depArgs =
             {
+              cargoExtraArgs ? "-p mcp-plan",
               buildInputs ? [ ],
               nativeBuildInputs ? [ ],
             }:
             baseArgs
             // {
-              inherit buildInputs nativeBuildInputs;
-              cargoExtraArgs = "-p mcp-plan --all-features";
+              inherit buildInputs nativeBuildInputs cargoExtraArgs;
             };
 
           vendor = craneLib.vendorCargoDeps (depArgs {
             buildInputs = tlsBuildInputs ++ sqliteBuildInputs;
             nativeBuildInputs = nativeBuildInputs;
+            cargoExtraArgs = "-p mcp-plan --all-features";
           });
 
           cargoArtifacts =
             {
+              cargoExtraArgs ? "-p mcp-plan",
               buildInputs ? [ ],
               nativeBuildInputs ? [ ],
             }:
             craneLib.buildDepsOnly (depArgs {
-              inherit buildInputs nativeBuildInputs;
+              inherit buildInputs nativeBuildInputs cargoExtraArgs;
             });
 
           buildVariant =
             {
               name,
-              cargoExtraArgs,
+              cargoExtraArgs ? "-p mcp-plan",
               buildInputs ? [ ],
               nativeBuildInputs ? [ ],
             }:
@@ -95,15 +97,22 @@
                   buildInputs
                   nativeBuildInputs
                   ;
-                cargoArtifacts = cargoArtifacts { inherit buildInputs nativeBuildInputs; };
+                cargoArtifacts = cargoArtifacts { inherit cargoExtraArgs buildInputs nativeBuildInputs; };
                 meta.mainProgram = "mcp-plan";
               }
             );
 
-          unwrapped-sqlite = buildVariant {
+          unwrapped = buildVariant {
             name = "mcp-plan";
-            cargoExtraArgs = "-p mcp-plan";
-            buildInputs = sqliteBuildInputs;
+            cargoExtraArgs = "-p mcp-plan --all-features";
+            buildInputs = tlsBuildInputs ++ sqliteBuildInputs;
+            nativeBuildInputs = nativeBuildInputs;
+          };
+
+          unwrapped-sqlite = buildVariant {
+            name = "mcp-plan-sqlite";
+            cargoExtraArgs = "-p mcp-plan --no-default-features --features sqlite";
+            buildInputs = tlsBuildInputs ++ sqliteBuildInputs;
             nativeBuildInputs = nativeBuildInputs;
           };
 
@@ -142,13 +151,13 @@
         {
           inherit
             rust
+            unwrapped
             unwrapped-sqlite
             unwrapped-postgres
             unwrapped-mysql
             vendor
             ;
-          unwrapped = unwrapped-sqlite;
-          package = symlink "mcp-plan" unwrapped-sqlite;
+          package = symlink "mcp-plan" unwrapped;
           package-sqlite = symlink "mcp-plan-sqlite" unwrapped-sqlite;
           package-postgres = symlink "mcp-plan-postgres" unwrapped-postgres;
           package-mysql = symlink "mcp-plan-mysql" unwrapped-mysql;
