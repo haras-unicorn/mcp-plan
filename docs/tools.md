@@ -36,6 +36,25 @@ Fields: `id`, `parent_id`, `source_id`, `title`, `description`, `status`,
 - `status`: `ready` | `success` | `failure` | `escalated`
 - `priority`: `critical` | `high` | `medium` | `low`
 
+## `sources()` — list all sources
+
+Returns every configured source, ordered by id.
+
+```text
+sources({})
+```
+
+```json
+[
+  {
+    "id": "gh",
+    "title": "GitHub issues",
+    "description": "fetch instructions",
+    "type": "poll"
+  }
+]
+```
+
 ## `children(parent_id?)` — list children of a task
 
 Returns a compact array of direct children. When `parent_id` is omitted (or
