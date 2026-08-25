@@ -21,7 +21,7 @@ pub struct Config {
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
 pub struct DatabaseConfig {
-  /// Database URL. Accepts `sqlite:data/mcp-plan.db`, `sqlite::memory:`,
+  /// Database URL. Accepts `sqlite://data/mcp-plan.db`, `sqlite::memory:`,
   /// `postgres://user:password@host:port/database` or
   /// `mysql://user:password@host:port/database`.
   #[serde(default = "default_database_url")]
@@ -95,7 +95,7 @@ impl Default for RuntimeConfig {
 }
 
 fn default_database_url() -> String {
-  "sqlite:data/mcp-plan.db".to_owned()
+  "sqlite://data/mcp-plan.db".to_owned()
 }
 
 fn default_tps_in() -> u64 {
@@ -234,7 +234,7 @@ mod tests {
 
   const FULL_TOML: &str = r#"
     [database]
-    url = "sqlite:data/test.db"
+    url = "sqlite://data/test.db"
 
     [runtime]
     tps_in = 100
@@ -262,7 +262,7 @@ mod tests {
   #[test]
   fn defaults() -> Result<()> {
     let config = Config::default();
-    assert_eq!(config.database.url, "sqlite:data/mcp-plan.db");
+    assert_eq!(config.database.url, "sqlite://data/mcp-plan.db");
     assert_eq!(config.runtime.tps_in, default_tps_in());
     assert_eq!(config.runtime.tps_out, default_tps_out());
     assert_eq!(
@@ -278,7 +278,7 @@ mod tests {
   #[test]
   fn parses_full_config() -> Result<()> {
     let config = from_toml(FULL_TOML)?;
-    assert_eq!(config.database.url, "sqlite:data/test.db");
+    assert_eq!(config.database.url, "sqlite://data/test.db");
     assert_eq!(config.runtime.tps_in, 100);
     assert_eq!(config.runtime.max_retries, 2);
     assert_eq!(config.sources.len(), 1);
