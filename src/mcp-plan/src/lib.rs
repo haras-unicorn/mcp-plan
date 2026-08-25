@@ -89,6 +89,31 @@ impl PlanServer {
     }
   }
 
+  /// Return all sources, ordered by id.
+  pub async fn sources(&self) -> Result<CallToolResult, ErrorData> {
+    let started = Instant::now();
+    match self.service.sources().await {
+      Ok(list) => {
+        tracing::debug!(
+          tool = "sources",
+          count = list.len(),
+          duration_ms = started.elapsed().as_millis() as u64,
+          message = "tool `sources` completed",
+        );
+        self.structured(&list)
+      }
+      Err(e) => {
+        tracing::error!(
+          tool = "sources",
+          duration_ms = started.elapsed().as_millis() as u64,
+          error = %e,
+          message = "tool `sources` failed",
+        );
+        Err(ErrorData::internal_error(e.to_string(), None))
+      }
+    }
+  }
+
   /// Return the direct children of a task (`parent_id`), or roots when omitted.
   pub async fn children(
     &self,

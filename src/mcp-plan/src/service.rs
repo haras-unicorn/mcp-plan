@@ -5,8 +5,8 @@
 use crate::config::{Config, RuntimeConfig};
 use crate::db::entities::tasks;
 use crate::models::{
-  NewTask, QueuedTask, Task, TaskPriority, TaskStatus, TaskSummary, TaskType,
-  TaskUpdate,
+  NewTask, QueuedTask, Source, Task, TaskPriority, TaskStatus, TaskSummary,
+  TaskType, TaskUpdate,
 };
 use chrono::Utc;
 use sea_orm::ActiveModelTrait as _;
@@ -60,6 +60,16 @@ impl Service {
       .one(&self.db)
       .await?;
     Ok(model.map(Task::from))
+  }
+
+  /// Fetch all sources, ordered by id.
+  pub async fn sources(&self) -> Result<Vec<Source>, ServiceError> {
+    use crate::db::entities::sources;
+    let models = sources::Entity::find()
+      .order_by_asc(sources::Column::Id)
+      .all(&self.db)
+      .await?;
+    Ok(models.into_iter().map(Source::from).collect())
   }
 
   /// Fetch direct children of `parent_id`. `None` means root-level tasks.
@@ -689,6 +699,41 @@ mod tests {
 
       let fetched = service.load(&id).await.expect("fetch");
       assert_eq!(fetched.status, "escalated");
+    }
+  }
+
+  #[tokio::test]
+  async fn sources_lists_all_ordered() {
+    use crate::db::entities::sources;
+    use sea_orm::ActiveValue::Set as SetValue;
+
+    for env in environments().await {
+      let service = &env.service;
+      sources::Entity::insert(sources::ActiveModel {
+        id: SetValue("b".to_owned()),
+        title: SetValue("B".to_owned()),
+        description: SetValue("bbb".to_owned()),
+        source_type: SetValue("manual".to_owned()),
+      })
+      .exec(&service.db)
+      .await
+      .expect("insert b");
+      sources::Entity::insert(sources::ActiveModel {
+        id: SetValue("a".to_owned()),
+        title: SetValue("A".to_owned()),
+        description: SetValue("aaa".to_owned()),
+        source_type: SetValue("poll".to_owned()),
+      })
+      .exec(&service.db)
+      .await
+      .expect("insert a");
+
+      let list = service.sources().await.expect("sources");
+      assert_eq!(list.len(), 2);
+      assert_eq!(list[0].id, "a");
+      assert_eq!(list[0].title, "A");
+      assert_eq!(list[0].source_type, "poll");
+      assert_eq!(list[1].id, "b");
     }
   }
 

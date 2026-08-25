@@ -1,7 +1,7 @@
 //! DTOs for the MCP tool surface. These are plain serde types (no sea-orm)
 //! so the wire API is stable and independent of the persistence schema.
 
-use crate::db::entities::tasks;
+use crate::db::entities::{sources, tasks};
 use chrono::{DateTime, Utc};
 use rmcp::schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -69,6 +69,18 @@ pub struct Task {
   pub estimated_tokens_reasoning: Option<i64>,
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub estimated_tokens_out: Option<i64>,
+}
+
+/// A source as returned by `sources()`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[schemars(crate = "rmcp::schemars")]
+pub struct Source {
+  pub id: String,
+  pub title: String,
+  pub description: String,
+  #[serde(rename = "type")]
+  #[schemars(rename = "type")]
+  pub source_type: String,
 }
 
 /// A compact representation of a task, used by `children()`.
@@ -208,6 +220,17 @@ impl From<&tasks::Model> for TaskSummary {
       estimated_tokens_in: model.estimated_tokens_in,
       estimated_tokens_reasoning: model.estimated_tokens_reasoning,
       estimated_tokens_out: model.estimated_tokens_out,
+    }
+  }
+}
+
+impl From<sources::Model> for Source {
+  fn from(model: sources::Model) -> Self {
+    Self {
+      id: model.id,
+      title: model.title,
+      description: model.description,
+      source_type: model.source_type,
     }
   }
 }
