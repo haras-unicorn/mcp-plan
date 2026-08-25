@@ -10,7 +10,7 @@
 # Database URL. Any of the supported backends:
 #   sqlite://data/mcp-plan.db          (relative file)
 #   sqlite:///var/lib/mcp-plan/mcp-plan.db   (absolute file)
-#   sqlite::memory:
+#   sqlite://:memory:
 #   postgres://user:password@host:5432/database
 #   mysql://user:password@host:3306/database
 url = "sqlite://data/mcp-plan.db"

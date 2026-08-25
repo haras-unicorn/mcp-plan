@@ -23,7 +23,7 @@
       "type": "object",
       "properties": {
         "url": {
-          "description": "Database URL. Accepts `sqlite://data/mcp-plan.db`, `sqlite::memory:`,\n`postgres://user:password@host:port/database` or\n`mysql://user:password@host:port/database`.",
+          "description": "Database URL. Accepts `sqlite://data/mcp-plan.db`, `sqlite://:memory:`,\n`postgres://user:password@host:port/database` or\n`mysql://user:password@host:port/database`.",
           "type": "string",
           "default": "sqlite://data/mcp-plan.db"
         }
