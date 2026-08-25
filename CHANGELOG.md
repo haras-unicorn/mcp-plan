@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.5](https://github.com/haras-unicorn/mcp-plan/compare/v0.1.4...v0.1.5) - 2026-08-25
+
+### Fixed
+
+- *(sqlite)* auto create database file and fix url parsing ([#16](https://github.com/haras-unicorn/mcp-plan/pull/16))
+
+### Other
+
+- *(readme)* fix run invocation ([#14](https://github.com/haras-unicorn/mcp-plan/pull/14))
+- add heartbeat example ([#12](https://github.com/haras-unicorn/mcp-plan/pull/12))
+
 ## [0.1.4](https://github.com/haras-unicorn/mcp-plan/compare/v0.1.3...v0.1.4) - 2026-08-25
 
 ### Added
