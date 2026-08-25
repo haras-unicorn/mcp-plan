@@ -225,15 +225,38 @@ startup; `migrate` exits immediately afterwards so migrations can be run as a
 separate init step (e.g. in multi-tenant deployments). SQLite runs in WAL mode
 with foreign keys enabled.
 
+## Integration
+
+`mcp-plan` is a regular MCP server, so any MCP client — including a custom agent
+runtime — can drive it. Register it as a stdio server (see the [Usage](#usage)
+example) and expose the `plan__*` tools to your agent.
+
+To keep an autonomous agent working over time, add a scheduler of your choice (a
+cron entry, a CI scheduled job, a loop inside an existing daemon or an OpenClaw
+heartbeat/agent cron job) that periodically connects to `mcp-plan` and instructs
+the agent to run a planning/delegation pass. An example heartbeat prompt is
+provided in [References](#references) section—you can point a cron job at it
+verbatim or use it as a template:
+
+```sh
+# example: run an agent-driven planning pass on an interval
+*/30 * * * * mcp-plan-with-agent --instruct assets/heartbeat.md
+```
+
+Exact wiring depends on your runtime; the example shows the shape. The tasks and
+sources live in the database, so each pass should continue where the previous
+one stopped.
+
 <!-- ANCHOR_END: body -->
 
 ## References
 
-The JSON schema and an example configuration are generated and versioned under
-`assets`:
+The JSON schema, an example configuration, and an example heartbeat are
+generated and versioned under `assets`:
 
 - [assets/config.schema.json](./assets/config.schema.json)
 - [assets/config.example.toml](./assets/config.example.toml)
+- [assets/heartbeat.md](./assets/heartbeat.md)
 
 ## Documentation
 
