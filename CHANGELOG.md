@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.6](https://github.com/haras-unicorn/mcp-plan/compare/v0.1.5...v0.1.6) - 2026-08-25
+
+### Fixed
+
+- tools not being discoverable ([#19](https://github.com/haras-unicorn/mcp-plan/pull/19))
+- *(sqlite)* only allow uri scheme style urls ([#17](https://github.com/haras-unicorn/mcp-plan/pull/17))
+
 ## [0.1.5](https://github.com/haras-unicorn/mcp-plan/compare/v0.1.4...v0.1.5) - 2026-08-25
 
 ### Fixed
