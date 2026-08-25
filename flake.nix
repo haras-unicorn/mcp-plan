@@ -178,7 +178,14 @@
             in
             {
               mcp-plan = packages.package;
+              mcp-plan-sqlite = packages.package-sqlite;
+              mcp-plan-postgres = packages.package-postgres;
+              mcp-plan-mysql = packages.package-mysql;
+
               mcp-plan-unwrapped = packages.unwrapped;
+              mcp-plan-unwrapped-sqlite = packages.unwrapped-sqlite;
+              mcp-plan-unwrapped-postgres = packages.unwrapped-postgres;
+              mcp-plan-unwrapped-mysql = packages.unwrapped-mysql;
             };
         in
         {
