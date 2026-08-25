@@ -15,3 +15,9 @@
 ```toml
 {{#include ../assets/config.example.toml}}
 ```
+
+### Heartbeat
+
+```json
+{{#include ../assets/heartbeat.md}}
+```
