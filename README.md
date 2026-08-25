@@ -215,7 +215,7 @@ per-target filters, etc.).
 - `sqlite://data/mcp-plan.db` — a SQLite file (relative to the working
   directory). The database file and its parent directory are created on first
   start. Use an absolute path (e.g. `sqlite:///var/lib/mcp-plan.db`) or
-  `sqlite::memory:` for an in-memory database.
+  `sqlite://:memory:` for an in-memory database.
 - `postgres://user:password@host:port/database` — PostgreSQL.
 - `mysql://user:password@host:port/database` — MySQL.
 

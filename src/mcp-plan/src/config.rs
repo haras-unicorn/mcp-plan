@@ -21,7 +21,7 @@ pub struct Config {
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
 pub struct DatabaseConfig {
-  /// Database URL. Accepts `sqlite://data/mcp-plan.db`, `sqlite::memory:`,
+  /// Database URL. Accepts `sqlite://data/mcp-plan.db`, `sqlite://:memory:`,
   /// `postgres://user:password@host:port/database` or
   /// `mysql://user:password@host:port/database`.
   #[serde(default = "default_database_url")]

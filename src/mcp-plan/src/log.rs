@@ -22,7 +22,7 @@ pub fn init() {
 /// A short human-readable summary of the database backend, derived from the
 /// URL. Never includes the URL itself, which may contain credentials.
 pub fn backend_label(url: &str) -> &'static str {
-  if url.starts_with("sqlite:") {
+  if url.starts_with("sqlite://") {
     "sqlite"
   } else if url.starts_with("postgres://") {
     "postgres"

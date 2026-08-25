@@ -8,24 +8,28 @@ use std::path::PathBuf;
 /// Open the database from `config.database.url`, enable sqlite pragmas when the
 /// url targets sqlite, then apply any pending migrations.
 pub async fn connect(config: &Config) -> anyhow::Result<DatabaseConnection> {
-  let url = &config.database.url;
-  let backend = crate::log::backend_label(url);
+  let mut url = config.database.url.clone();
+  let backend = crate::log::backend_label(&url);
   tracing::debug!(backend, "opening database");
 
   #[cfg(feature = "sqlite")]
-  if is_sqlite(url) && !is_sqlite_memory(url) {
-    // sqlx's sqlite driver does not create a missing database file unless
-    // `create_if_missing` is set. sea-orm does not expose it, so create the
-    // file (and its parent directory) here, before connecting.
-    prepare_sqlite(url)?;
-  }
+  if is_sqlite(&url) {
+    if !is_sqlite_memory(&url) {
+      // sqlx's sqlite driver does not create a missing database file unless
+      // `create_if_missing` is set. sea-orm does not expose it, so create the
+      // file (and its parent directory) here, before connecting.
+      prepare_sqlite_file(&url)?;
+    }
 
-  let db = sea_orm::Database::connect(url)
+    url = fixup_sqlite_url(&url);
+  };
+
+  let db = sea_orm::Database::connect(&url)
     .await
     .with_context(|| format!("failed to connect to `{backend}` database"))?;
 
   #[cfg(feature = "sqlite")]
-  if is_sqlite(url) {
+  if is_sqlite(&url) {
     db.execute_unprepared("PRAGMA journal_mode = WAL;").await?;
     db.execute_unprepared("PRAGMA foreign_keys = ON;").await?;
   }
@@ -38,42 +42,44 @@ pub async fn connect(config: &Config) -> anyhow::Result<DatabaseConnection> {
 /// Whether `url` points at a sqlite database.
 #[cfg(feature = "sqlite")]
 fn is_sqlite(url: &str) -> bool {
-  url.starts_with("sqlite:")
+  url.starts_with("sqlite://")
 }
 
 /// Whether the sqlite url is an in-memory database (nothing to prepare on disk).
 #[cfg(feature = "sqlite")]
 fn is_sqlite_memory(url: &str) -> bool {
-  url == "sqlite::memory:" || url.contains(":memory:")
+  url == "sqlite://:memory:"
 }
 
-/// Extract the file path out of a `sqlite:` url, supporting both the bare
-/// (`sqlite:data/plan.db`, `sqlite:/var/lib/plan.db`) and the proper URI
-/// (`sqlite://data/plan.db`, `sqlite:///var/lib/plan.db`) forms.
+/// Sea ORM expects SQLite URL's that begin with `sqlite:` rather than `sqlite://`
 #[cfg(feature = "sqlite")]
-fn sqlite_path(url: &str) -> PathBuf {
-  let rest = url.strip_prefix("sqlite:").unwrap_or(url);
-  let rest = rest.strip_prefix(':').unwrap_or(rest);
+fn fixup_sqlite_url(url: &str) -> String {
+  url.replace("sqlite://", "sqlite:")
+}
 
-  if let Some(rest) = rest.strip_prefix("//") {
-    // Proper URI form: `sqlite://[authority]/path`. An empty authority with a
-    // leading `/` (i.e. `sqlite:///abs/path`) denotes an absolute path; a
-    // non-empty authority (`sqlite://data/plan.db`) is a leading path segment.
-    if let Some(path) = rest.strip_prefix('/') {
-      PathBuf::from(format!("/{path}"))
-    } else {
-      PathBuf::from(rest)
-    }
+/// Extract the file path out of a `sqlite:` url, supporting both the relative
+/// (`sqlite://data/plan.db`) and absolute (`sqlite:///var/lib/plan.db`) forms.
+#[cfg(feature = "sqlite")]
+fn sqlite_path(url: &str) -> anyhow::Result<PathBuf> {
+  let rest = url
+    .strip_prefix("sqlite://")
+    .ok_or_else(|| anyhow::anyhow!("{url} is not a sqlite URL"))?;
+
+  // Proper URI form: `sqlite://[authority]/path`. An empty authority with a
+  // leading `/` (i.e. `sqlite:///abs/path`) denotes an absolute path; a
+  // non-empty authority (`sqlite://data/plan.db`) is a leading path segment.
+  if let Some(path) = rest.strip_prefix('/') {
+    Ok(PathBuf::from(format!("/{path}")))
   } else {
-    PathBuf::from(rest)
+    Ok(PathBuf::from(rest))
   }
 }
 
 /// Create the parent directory and the database file (if missing) for a
 /// file-backed sqlite url.
 #[cfg(feature = "sqlite")]
-fn prepare_sqlite(url: &str) -> anyhow::Result<()> {
-  let path = sqlite_path(url);
+fn prepare_sqlite_file(url: &str) -> anyhow::Result<()> {
+  let path = sqlite_path(url)?;
 
   if let Some(parent) = path.parent()
     && !parent.as_os_str().is_empty()
@@ -124,21 +130,13 @@ mod tests {
   }
 
   #[test]
-  fn parses_bare_and_uri_forms() {
+  fn parses_relative_and_absolute_uri_forms() {
     assert_eq!(
-      sqlite_path("sqlite:data/plan.db"),
+      sqlite_path("sqlite://data/plan.db").unwrap(),
       PathBuf::from("data/plan.db")
     );
     assert_eq!(
-      sqlite_path("sqlite://data/plan.db"),
-      PathBuf::from("data/plan.db")
-    );
-    assert_eq!(
-      sqlite_path("sqlite:///var/lib/plan.db"),
-      PathBuf::from("/var/lib/plan.db")
-    );
-    assert_eq!(
-      sqlite_path("sqlite:/var/lib/plan.db"),
+      sqlite_path("sqlite:///var/lib/plan.db").unwrap(),
       PathBuf::from("/var/lib/plan.db")
     );
   }
