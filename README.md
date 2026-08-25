@@ -171,7 +171,7 @@ mcp-plan --config ./prod.toml migrate run
 
 ```toml
 [database]
-url = "sqlite:data/mcp-plan.db"
+url = "sqlite://data/mcp-plan.db"
 ```
 
 The file is split into three sections:
@@ -212,8 +212,10 @@ per-target filters, etc.).
 
 `database.url` selects the backend by scheme:
 
-- `sqlite:data/mcp-plan.db` — a SQLite file. The parent directory is created on
-  first start. Use `sqlite::memory:` for an in-memory database.
+- `sqlite://data/mcp-plan.db` — a SQLite file (relative to the working
+  directory). The database file and its parent directory are created on first
+  start. Use an absolute path (e.g. `sqlite:///var/lib/mcp-plan.db`) or
+  `sqlite::memory:` for an in-memory database.
 - `postgres://user:password@host:port/database` — PostgreSQL.
 - `mysql://user:password@host:port/database` — MySQL.
 
