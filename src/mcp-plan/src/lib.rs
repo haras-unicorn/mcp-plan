@@ -11,8 +11,6 @@
 #![deny(clippy::todo)]
 #![deny(clippy::allow_attributes_without_reason)]
 
-use rmcp::tool_router;
-
 pub mod config;
 pub mod connect;
 pub mod db;
@@ -27,10 +25,73 @@ pub mod test;
 pub use migration::{MigrationRunner, Migrator};
 
 use models::{NewTask, TaskStatus, TaskUpdate};
-use rmcp::model::{CallToolResult, ErrorData};
-use rmcp::serde_json::json;
+use rmcp::{
+  Json, handler::server::wrapper::Parameters, model::ErrorData,
+  schemars::JsonSchema, tool, tool_router,
+};
+use serde::Deserialize;
 use service::Service;
 use std::time::Instant;
+
+/// Input for the `task` tool.
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+#[schemars(crate = "rmcp::schemars")]
+pub struct TaskInput {
+  pub id: String,
+}
+
+/// Input for the `children` tool.
+#[derive(Debug, Clone, Default, Deserialize, JsonSchema)]
+#[schemars(crate = "rmcp::schemars")]
+pub struct ChildrenInput {
+  pub parent_id: Option<String>,
+}
+
+/// Input for the `insert` tool.
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+#[schemars(crate = "rmcp::schemars")]
+pub struct InsertInput {
+  pub object: NewTask,
+  pub parent_id: Option<String>,
+}
+
+/// Output of the `insert` tool.
+#[derive(Debug, Clone, serde::Serialize, JsonSchema)]
+#[schemars(crate = "rmcp::schemars")]
+pub struct InsertOutput {
+  pub id: String,
+}
+
+/// Input for the `complete` tool.
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+#[schemars(crate = "rmcp::schemars")]
+pub struct CompleteInput {
+  pub task_id: String,
+  pub status: String,
+}
+
+/// Input for the `fail` tool.
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+#[schemars(crate = "rmcp::schemars")]
+pub struct FailInput {
+  pub task_id: String,
+  pub status: String,
+}
+
+/// Input for the `escalate` tool.
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+#[schemars(crate = "rmcp::schemars")]
+pub struct EscalateInput {
+  pub task_id: String,
+}
+
+/// Input for the `ready` tool.
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+#[schemars(crate = "rmcp::schemars")]
+pub struct ReadyInput {
+  pub task_id: String,
+  pub object: TaskUpdate,
+}
 
 /// MCP server that provides planning tooling.
 #[derive(Debug, Clone)]
@@ -38,48 +99,41 @@ pub struct PlanServer {
   pub service: Service,
 }
 
-impl PlanServer {
-  /// Convert a positive result into a structured-content result.
-  fn structured<T: serde::Serialize>(
-    &self,
-    value: T,
-  ) -> Result<CallToolResult, ErrorData> {
-    rmcp::serde_json::to_value(value)
-      .map(CallToolResult::structured)
-      .map_err(|e| ErrorData::internal_error(e.to_string(), None))
-  }
-}
-
 #[tool_router(server_handler)]
 impl PlanServer {
   /// Fetch a single task by id.
-  pub async fn task(&self, id: String) -> Result<CallToolResult, ErrorData> {
+  #[tool(name = "task", description = "Fetch a single task by id.")]
+  pub async fn task(
+    &self,
+    Parameters(input): Parameters<TaskInput>,
+  ) -> Result<Json<models::Task>, ErrorData> {
     let started = Instant::now();
-    match self.service.task(&id).await {
+    match self.service.task(&input.id).await {
       Ok(Some(task)) => {
         tracing::info!(
           tool = "task",
-          task_id = %id,
+          task_id = %input.id,
           duration_ms = started.elapsed().as_millis() as u64,
           message = "tool `task` completed",
         );
-        self.structured(&task)
+        Ok(Json(task))
       }
       Ok(None) => {
         tracing::warn!(
           tool = "task",
-          task_id = %id,
+          task_id = %input.id,
           duration_ms = started.elapsed().as_millis() as u64,
           message = "task not found",
         );
-        Ok(CallToolResult::structured(
-          json!({ "error": format!("task `{id}` not found") }),
+        Err(ErrorData::internal_error(
+          format!("task `{}` not found", input.id),
+          None,
         ))
       }
       Err(e) => {
         tracing::error!(
           tool = "task",
-          task_id = %id,
+          task_id = %input.id,
           duration_ms = started.elapsed().as_millis() as u64,
           error = %e,
           message = "tool `task` failed",
@@ -90,7 +144,8 @@ impl PlanServer {
   }
 
   /// Return all sources, ordered by id.
-  pub async fn sources(&self) -> Result<CallToolResult, ErrorData> {
+  #[tool(name = "sources", description = "Return all sources, ordered by id.")]
+  pub async fn sources(&self) -> Result<Json<Vec<models::Source>>, ErrorData> {
     let started = Instant::now();
     match self.service.sources().await {
       Ok(list) => {
@@ -100,7 +155,7 @@ impl PlanServer {
           duration_ms = started.elapsed().as_millis() as u64,
           message = "tool `sources` completed",
         );
-        self.structured(&list)
+        Ok(Json(list))
       }
       Err(e) => {
         tracing::error!(
@@ -115,21 +170,25 @@ impl PlanServer {
   }
 
   /// Return the direct children of a task (`parent_id`), or roots when omitted.
+  #[tool(
+    name = "children",
+    description = "Return the direct children of a task (`parent_id`), or roots when omitted."
+  )]
   pub async fn children(
     &self,
-    parent_id: Option<String>,
-  ) -> Result<CallToolResult, ErrorData> {
+    Parameters(input): Parameters<ChildrenInput>,
+  ) -> Result<Json<Vec<models::TaskSummary>>, ErrorData> {
     let started = Instant::now();
-    match self.service.children(parent_id.as_deref()).await {
+    match self.service.children(input.parent_id.as_deref()).await {
       Ok(list) => {
         tracing::debug!(
           tool = "children",
-          parent_id = %parent_id.as_deref().unwrap_or(""),
+          parent_id = %input.parent_id.as_deref().unwrap_or(""),
           count = list.len(),
           duration_ms = started.elapsed().as_millis() as u64,
           message = "tool `children` completed",
         );
-        self.structured(&list)
+        Ok(Json(list))
       }
       Err(e) => {
         tracing::error!(
@@ -144,18 +203,25 @@ impl PlanServer {
   }
 
   /// Insert a new task (status `ready`); returns the new id.
+  #[tool(
+    name = "insert",
+    description = "Insert a new task (status `ready`); returns the new id."
+  )]
   pub async fn insert(
     &self,
-    object: NewTask,
-    parent_id: Option<String>,
-  ) -> Result<CallToolResult, ErrorData> {
+    Parameters(input): Parameters<InsertInput>,
+  ) -> Result<Json<InsertOutput>, ErrorData> {
     let started = Instant::now();
-    match self.service.insert(object, parent_id.as_deref()).await {
+    match self
+      .service
+      .insert(input.object, input.parent_id.as_deref())
+      .await
+    {
       Ok(id) => {
         tracing::info!(
           tool = "insert",
           task_id = %id,
-          parent_id = %parent_id.as_deref().unwrap_or(""),
+          parent_id = %input.parent_id.as_deref().unwrap_or(""),
           message = "tool `insert` completed",
         );
         tracing::debug!(
@@ -164,7 +230,7 @@ impl PlanServer {
           duration_ms = started.elapsed().as_millis() as u64,
           message = "tool `insert` completed",
         );
-        self.structured(json!({ "id": id }))
+        Ok(Json(InsertOutput { id }))
       }
       Err(e) => {
         tracing::error!(
@@ -179,19 +245,22 @@ impl PlanServer {
   }
 
   /// Mark a task as `success` or `failure`.
+  #[tool(
+    name = "complete",
+    description = "Mark a task as `success` or `failure`."
+  )]
   pub async fn complete(
     &self,
-    task_id: String,
-    status: String,
-  ) -> Result<CallToolResult, ErrorData> {
+    Parameters(input): Parameters<CompleteInput>,
+  ) -> Result<Json<models::Task>, ErrorData> {
     let started = Instant::now();
-    let status = match TaskStatus::from(status.as_str()) {
+    let status = match TaskStatus::from(input.status.as_str()) {
       TaskStatus::Success => TaskStatus::Success,
       TaskStatus::Failure => TaskStatus::Failure,
       _ => {
         tracing::warn!(
           tool = "complete",
-          task_id = %task_id,
+          task_id = %input.task_id,
           duration_ms = started.elapsed().as_millis() as u64,
           message = "tool `complete` rejected: invalid status",
         );
@@ -201,20 +270,20 @@ impl PlanServer {
         ));
       }
     };
-    match self.service.complete(&task_id, status).await {
+    match self.service.complete(&input.task_id, status).await {
       Ok(task) => {
         tracing::info!(
           tool = "complete",
-          task_id = %task_id,
+          task_id = %input.task_id,
           duration_ms = started.elapsed().as_millis() as u64,
           message = "tool `complete` completed",
         );
-        self.structured(&task)
+        Ok(Json(task))
       }
       Err(e) => {
         tracing::error!(
           tool = "complete",
-          task_id = %task_id,
+          task_id = %input.task_id,
           duration_ms = started.elapsed().as_millis() as u64,
           error = %e,
           message = "tool `complete` failed",
@@ -227,16 +296,19 @@ impl PlanServer {
   /// Mark a task as `failure`, incrementing `retries`. The `status` argument
   /// records the reason for the failure. Once retries reach the configured
   /// limit the task is escalated instead.
+  #[tool(
+    name = "fail",
+    description = "Mark a task as `failure`, incrementing retries. The `status` argument records the reason for the failure."
+  )]
   pub async fn fail(
     &self,
-    task_id: String,
-    status: String,
-  ) -> Result<CallToolResult, ErrorData> {
+    Parameters(input): Parameters<FailInput>,
+  ) -> Result<Json<models::Task>, ErrorData> {
     let started = Instant::now();
-    if status.trim().is_empty() {
+    if input.status.trim().is_empty() {
       tracing::warn!(
         tool = "fail",
-        task_id = %task_id,
+        task_id = %input.task_id,
         duration_ms = started.elapsed().as_millis() as u64,
         message = "tool `fail` rejected: empty status",
       );
@@ -245,26 +317,26 @@ impl PlanServer {
         None,
       ));
     }
-    match self.service.fail(&task_id).await {
+    match self.service.fail(&input.task_id).await {
       Ok(task) => {
         tracing::info!(
           tool = "fail",
-          task_id = %task_id,
+          task_id = %input.task_id,
           duration_ms = started.elapsed().as_millis() as u64,
           message = "tool `fail` completed",
         );
         tracing::debug!(
           tool = "fail",
-          task_id = %task_id,
-          reason = %status,
+          task_id = %input.task_id,
+          reason = %input.status,
           message = "task failed",
         );
-        self.structured(&task)
+        Ok(Json(task))
       }
       Err(e) => {
         tracing::error!(
           tool = "fail",
-          task_id = %task_id,
+          task_id = %input.task_id,
           duration_ms = started.elapsed().as_millis() as u64,
           error = %e,
           message = "tool `fail` failed",
@@ -275,25 +347,29 @@ impl PlanServer {
   }
 
   /// Mark a task as `escalated` (blocked pending human review).
+  #[tool(
+    name = "escalate",
+    description = "Mark a task as `escalated` (blocked pending human review)."
+  )]
   pub async fn escalate(
     &self,
-    task_id: String,
-  ) -> Result<CallToolResult, ErrorData> {
+    Parameters(input): Parameters<EscalateInput>,
+  ) -> Result<Json<models::Task>, ErrorData> {
     let started = Instant::now();
-    match self.service.escalate(&task_id).await {
+    match self.service.escalate(&input.task_id).await {
       Ok(task) => {
         tracing::info!(
           tool = "escalate",
-          task_id = %task_id,
+          task_id = %input.task_id,
           duration_ms = started.elapsed().as_millis() as u64,
           message = "tool `escalate` completed",
         );
-        self.structured(&task)
+        Ok(Json(task))
       }
       Err(e) => {
         tracing::error!(
           tool = "escalate",
-          task_id = %task_id,
+          task_id = %input.task_id,
           duration_ms = started.elapsed().as_millis() as u64,
           error = %e,
           message = "tool `escalate` failed",
@@ -304,26 +380,29 @@ impl PlanServer {
   }
 
   /// Update mutable fields and set status back to `ready`.
+  #[tool(
+    name = "ready",
+    description = "Update mutable fields and set status back to `ready`."
+  )]
   pub async fn ready(
     &self,
-    task_id: String,
-    object: TaskUpdate,
-  ) -> Result<CallToolResult, ErrorData> {
+    Parameters(input): Parameters<ReadyInput>,
+  ) -> Result<Json<models::Task>, ErrorData> {
     let started = Instant::now();
-    match self.service.ready(&task_id, object).await {
+    match self.service.ready(&input.task_id, input.object).await {
       Ok(task) => {
         tracing::info!(
           tool = "ready",
-          task_id = %task_id,
+          task_id = %input.task_id,
           duration_ms = started.elapsed().as_millis() as u64,
           message = "tool `ready` completed",
         );
-        self.structured(&task)
+        Ok(Json(task))
       }
       Err(e) => {
         tracing::error!(
           tool = "ready",
-          task_id = %task_id,
+          task_id = %input.task_id,
           duration_ms = started.elapsed().as_millis() as u64,
           error = %e,
           message = "tool `ready` failed",
@@ -334,7 +413,13 @@ impl PlanServer {
   }
 
   /// Return tasks needing work, sorted by priority then planning→execution.
-  pub async fn queue(&self) -> Result<CallToolResult, ErrorData> {
+  #[tool(
+    name = "queue",
+    description = "Return tasks needing work, sorted by priority then planning→execution."
+  )]
+  pub async fn queue(
+    &self,
+  ) -> Result<Json<Vec<models::QueuedTask>>, ErrorData> {
     let started = Instant::now();
     match self.service.queue().await {
       Ok(list) => {
@@ -344,7 +429,7 @@ impl PlanServer {
           duration_ms = started.elapsed().as_millis() as u64,
           message = "tool `queue` completed",
         );
-        self.structured(&list)
+        Ok(Json(list))
       }
       Err(e) => {
         tracing::error!(
