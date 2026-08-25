@@ -9,7 +9,7 @@ MCP server that provides planning tooling.
 `mcp-plan` is packaged as a Nix flake. Run it directly without installing:
 
 ```sh
-nix run github:haras-unicorn/mcp-plan
+nix run github:haras-unicorn/mcp-plan -- run
 ```
 
 or build the `mcp-plan` binary with:
@@ -30,7 +30,7 @@ To run with a specific backend (in this example `sqlite`) from releases:
 curl -L -o mcp-plan.tar.gz \
   https://github.com/haras-unicorn/mcp-plan/releases/latest/download/mcp-plan-x86_64-linux-sqlite.tar.gz
 tar -xzf mcp-plan.tar.gz
-./mcp-plan-x86_64-linux-sqlite
+./mcp-plan-x86_64-linux-sqlite run
 ```
 
 To run with a binary supporting all backends from releases:
@@ -39,7 +39,7 @@ To run with a binary supporting all backends from releases:
 curl -L -o mcp-plan.tar.gz \
   https://github.com/haras-unicorn/mcp-plan/releases/latest/download/mcp-plan-x86_64-linux.tar.gz
 tar -xzf mcp-plan.tar.gz
-./mcp-plan-x86_64-linux
+./mcp-plan-x86_64-linux run
 ```
 
 Pick the archive matching your backend:
@@ -125,7 +125,7 @@ Add it as a stdio MCP server to any MCP client, for example:
   "mcpServers": {
     "mcp-plan": {
       "command": "nix",
-      "args": ["run", "github:haras-unicorn/mcp-plan"]
+      "args": ["run", "github:haras-unicorn/mcp-plan", "--", "run"]
     }
   }
 }
@@ -139,7 +139,7 @@ instead:
   "mcpServers": {
     "mcp-plan": {
       "command": "mcp-plan",
-      "args": []
+      "args": ["run"]
     }
   }
 }
@@ -155,7 +155,7 @@ full schema and a worked example live in the [References](#references) section.
 
 The binary accepts a subcommand:
 
-- `mcp-plan` / `mcp-plan run` — start the MCP server over stdio (default).
+- `mcp-plan run` — start the MCP server over stdio (default).
 - `mcp-plan migrate` — open the database and apply pending migrations, then
   exit.
 - `mcp-plan schema` — write the configuration JSON schema to `--output`.
@@ -164,7 +164,7 @@ The binary accepts a subcommand:
 (defaults to `config.toml`), for example:
 
 ```sh
-mcp-plan --config ./prod.toml migrate
+mcp-plan --config ./prod.toml migrate run
 ```
 
 ### Configuration file
@@ -190,7 +190,7 @@ Environment variables override file values. Use the `MCP_PLAN` prefix with `__`
 as the section separator:
 
 ```sh
-MCP_PLAN__RUNTIME__TPS_IN=1000 mcp-plan
+MCP_PLAN__RUNTIME__TPS_IN=1000 mcp-plan run
 ```
 
 ### Logging
@@ -201,7 +201,7 @@ exclusively for the MCP JSON-RPC protocol. Each line carries a `level`,
 `task_id`, `duration_ms`) that are safe to query with `jq`:
 
 ```sh
-RUST_LOG=debug mcp-plan 2> >(jq -r '"\(.level): \(.message)"')
+RUST_LOG=debug mcp-plan run 2> >(jq -r '"\(.level): \(.message)"')
 ```
 
 Log verbosity is controlled via `RUST_LOG` (default `info`). Any standard
