@@ -32,6 +32,8 @@ pub mod entities {
       pub source_id: Option<String>,
       pub title: String,
       pub description: String,
+      #[sea_orm(string_len = 255, nullable)]
+      pub link: Option<String>,
       #[sea_orm(default_value = "ready")]
       pub status: String,
       #[sea_orm(default_value = "medium")]

@@ -37,7 +37,8 @@ use std::time::Instant;
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
 pub struct TaskInput {
-  pub id: String,
+  pub id: Option<String>,
+  pub link: Option<String>,
 }
 
 /// Input for the `children` tool.
@@ -101,18 +102,50 @@ pub struct PlanServer {
 
 #[tool_router(server_handler)]
 impl PlanServer {
-  /// Fetch a single task by id.
-  #[tool(name = "task", description = "Fetch a single task by id.")]
+  /// Fetch a single task by id or link (exactly one required).
+  #[tool(
+    name = "task",
+    description = "Fetch a single task by id or link (exactly one required)."
+  )]
   pub async fn task(
     &self,
     Parameters(input): Parameters<TaskInput>,
   ) -> Result<Json<models::Task>, ErrorData> {
     let started = Instant::now();
-    match self.service.task(&input.id).await {
+
+    let reference = match (&input.id, &input.link) {
+      (Some(_), Some(_)) => {
+        tracing::warn!(
+          tool = "task",
+          duration_ms = started.elapsed().as_millis() as u64,
+          message = "tool `task` rejected: both id and link provided",
+        );
+        return Err(ErrorData::invalid_params(
+          "provide exactly one of `id` or `link`, not both",
+          None,
+        ));
+      }
+      (None, None) => {
+        tracing::warn!(
+          tool = "task",
+          duration_ms = started.elapsed().as_millis() as u64,
+          message = "tool `task` rejected: neither id nor link provided",
+        );
+        return Err(ErrorData::invalid_params(
+          "provide exactly one of `id` or `link`",
+          None,
+        ));
+      }
+      (Some(id), None) => service::TaskRef::Id(id.to_owned()),
+      (None, Some(link)) => service::TaskRef::Link(link.to_owned()),
+    };
+    let key = reference.as_str().to_owned();
+
+    match self.service.task_ref(reference).await {
       Ok(Some(task)) => {
         tracing::info!(
           tool = "task",
-          task_id = %input.id,
+          task_id = %key,
           duration_ms = started.elapsed().as_millis() as u64,
           message = "tool `task` completed",
         );
@@ -121,19 +154,19 @@ impl PlanServer {
       Ok(None) => {
         tracing::warn!(
           tool = "task",
-          task_id = %input.id,
+          task_id = %key,
           duration_ms = started.elapsed().as_millis() as u64,
           message = "task not found",
         );
         Err(ErrorData::internal_error(
-          format!("task `{}` not found", input.id),
+          format!("task `{key}` not found"),
           None,
         ))
       }
       Err(e) => {
         tracing::error!(
           tool = "task",
-          task_id = %input.id,
+          task_id = %key,
           duration_ms = started.elapsed().as_millis() as u64,
           error = %e,
           message = "tool `task` failed",

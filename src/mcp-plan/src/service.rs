@@ -41,6 +41,23 @@ impl From<sea_orm::DbErr> for ServiceError {
   }
 }
 
+/// A reference to a task by either its `id` or its unique `link`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TaskRef {
+  Id(String),
+  Link(String),
+}
+
+impl TaskRef {
+  /// The raw identifier value (used for logging and errors).
+  pub fn as_str(&self) -> &str {
+    match self {
+      Self::Id(id) => id,
+      Self::Link(link) => link,
+    }
+  }
+}
+
 /// Service layer over the task database. Holds the connection and the shared
 /// runtime configuration so callers don't pass state on every call.
 #[derive(Clone, Debug)]
@@ -59,6 +76,35 @@ impl Service {
     let model = tasks::Entity::find_by_id(id.to_owned())
       .one(&self.db)
       .await?;
+    Ok(model.map(Task::from))
+  }
+
+  /// Fetch a single task by its unique `link`.
+  pub async fn task_by_link(
+    &self,
+    link: &str,
+  ) -> Result<Option<Task>, ServiceError> {
+    let model = tasks::Entity::find()
+      .filter(tasks::Column::Link.eq(link))
+      .one(&self.db)
+      .await?;
+    Ok(model.map(Task::from))
+  }
+
+  /// Fetch a single task by either its `id` or its unique `link`.
+  pub async fn task_ref(
+    &self,
+    reference: TaskRef,
+  ) -> Result<Option<Task>, ServiceError> {
+    let model = match reference {
+      TaskRef::Id(id) => tasks::Entity::find_by_id(id).one(&self.db).await?,
+      TaskRef::Link(link) => {
+        tasks::Entity::find()
+          .filter(tasks::Column::Link.eq(link))
+          .one(&self.db)
+          .await?
+      }
+    };
     Ok(model.map(Task::from))
   }
 
@@ -115,6 +161,7 @@ impl Service {
       id: ActiveValue::Set(uuid::Uuid::new_v4().to_string()),
       parent_id: ActiveValue::Set(parent_id.map(ToOwned::to_owned)),
       source_id: ActiveValue::Set(new_task.source_id),
+      link: ActiveValue::Set(new_task.link),
       title: ActiveValue::Set(new_task.title),
       description: ActiveValue::Set(new_task.description),
       status: ActiveValue::Set(TaskStatus::Ready.as_str().to_owned()),
@@ -202,6 +249,9 @@ impl Service {
     }
     if let Some(priority) = update.priority {
       am.priority = ActiveValue::Set(priority.as_str().to_owned());
+    }
+    if let Some(link) = update.link {
+      am.link = ActiveValue::Set(Some(link));
     }
     if let Some(v) = update.estimated_tokens_in {
       am.estimated_tokens_in = ActiveValue::Set(Some(v));
@@ -494,6 +544,7 @@ mod tests {
           description: "".to_owned(),
           priority: TaskPriority::Medium,
           source_id: None,
+          link: None,
           estimated_tokens_in: stdin,
           estimated_tokens_reasoning: None,
           estimated_tokens_out: stdout,
@@ -520,6 +571,53 @@ mod tests {
   }
 
   #[tokio::test]
+  async fn task_fetch_by_id_and_link() {
+    for env in environments().await {
+      let service = &env.service;
+      let link = "https://example.com/x".to_owned();
+      let id = service
+        .insert(
+          NewTask {
+            title: "linked".to_owned(),
+            description: "".to_owned(),
+            priority: TaskPriority::Medium,
+            source_id: None,
+            link: Some(link.clone()),
+            estimated_tokens_in: None,
+            estimated_tokens_reasoning: None,
+            estimated_tokens_out: None,
+          },
+          None,
+        )
+        .await
+        .expect("insert");
+
+      let by_id = service.task(&id).await.expect("by id").expect("some");
+      assert_eq!(by_id.link.as_deref(), Some(link.as_str()));
+
+      let by_ref_id = service
+        .task_ref(TaskRef::Id(id.clone()))
+        .await
+        .expect("by ref id")
+        .expect("some");
+      assert_eq!(by_ref_id.id, id);
+
+      let by_ref_link = service
+        .task_ref(TaskRef::Link(link.clone()))
+        .await
+        .expect("by ref link")
+        .expect("some");
+      assert_eq!(by_ref_link.id, id);
+
+      let missing = service
+        .task_ref(TaskRef::Link("https://example.com/absent".to_owned()))
+        .await
+        .expect("missing");
+      assert!(missing.is_none());
+    }
+  }
+
+  #[tokio::test]
   async fn root_children_and_scoped_children() {
     for env in environments().await {
       let service = &env.service;
@@ -531,6 +629,7 @@ mod tests {
             description: "".to_owned(),
             priority: TaskPriority::High,
             source_id: None,
+            link: None,
             estimated_tokens_in: None,
             estimated_tokens_reasoning: None,
             estimated_tokens_out: None,
@@ -546,6 +645,7 @@ mod tests {
             description: "".to_owned(),
             priority: TaskPriority::Low,
             source_id: None,
+            link: None,
             estimated_tokens_in: None,
             estimated_tokens_reasoning: None,
             estimated_tokens_out: None,
@@ -744,6 +844,7 @@ mod tests {
       id: "t".to_owned(),
       parent_id: None,
       source_id: None,
+      link: None,
       title: "".to_owned(),
       description: "".to_owned(),
       status: "ready".to_owned(),
