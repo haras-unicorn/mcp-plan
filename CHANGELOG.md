@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.8](https://github.com/haras-unicorn/mcp-plan/compare/v0.1.7...v0.1.8) - 2026-08-26
+
+### Fixed
+
+- sync config sources in db on startup ([#22](https://github.com/haras-unicorn/mcp-plan/pull/22))
+
 ## [0.1.7](https://github.com/haras-unicorn/mcp-plan/compare/v0.1.6...v0.1.7) - 2026-08-26
 
 ### Added
