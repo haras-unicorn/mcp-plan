@@ -17,9 +17,16 @@ table in the database that the planning MCP server manages.
 2. After creating tasks as prose you should use the `plan__task`,
    `plan__children` and `plan__insert` tools to find fitting locations to put
    new tasks in and put them there. It is always important to check if a
-   particular task already exists to not duplicate it before insertion. Think of
-   it as a sort of tree traversal to insert new tasks into the already present
-   or new task trees.
+   particular task already exists to not duplicate it before insertion. When a
+   source describes a task as coming from a particular external item (an issue,
+   a PR, a discussion, etc.) you should pass the canonical URL or reference for
+   that item as `object.link` when inserting the task. `link` is unique when
+   set, so you can use it to deduplicate: before inserting a task, call
+   `plan__task` with only `link` to see whether a task for that item already
+   exists, and skip the insert if it does. If an insert is rejected because
+   another task already holds that `link`, treat it as a duplicate and ignore it
+   rather than retrying. Keep in mind that inserting is a sort of tree traversal
+   to insert new tasks into the already present or new task trees.
 
 3. After reading task sources and carefully inserting new tasks into task trees
    you need to call `plan__queue` which creates a list of tasks which are most

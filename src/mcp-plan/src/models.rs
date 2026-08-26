@@ -53,6 +53,8 @@ pub struct Task {
   pub parent_id: Option<String>,
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub source_id: Option<String>,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub link: Option<String>,
   pub title: String,
   pub description: String,
   pub status: TaskStatus,
@@ -121,6 +123,8 @@ pub struct NewTask {
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub source_id: Option<String>,
   #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub link: Option<String>,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
   pub estimated_tokens_in: Option<i64>,
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub estimated_tokens_reasoning: Option<i64>,
@@ -138,6 +142,8 @@ pub struct TaskUpdate {
   pub description: Option<String>,
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub priority: Option<TaskPriority>,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub link: Option<String>,
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub estimated_tokens_in: Option<i64>,
   #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -196,6 +202,7 @@ impl From<tasks::Model> for Task {
       id: model.id,
       parent_id: model.parent_id,
       source_id: model.source_id,
+      link: model.link,
       title: model.title,
       description: model.description,
       status: TaskStatus::from(model.status.as_str()),
@@ -263,6 +270,7 @@ mod tests {
       id: "t1".to_owned(),
       parent_id: Some("p".to_owned()),
       source_id: None,
+      link: None,
       title: "T".to_owned(),
       description: "D".to_owned(),
       status: TaskStatus::Ready,

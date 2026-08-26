@@ -31,6 +31,16 @@ impl MigrationTrait for CreateInitialSchema {
       .await?;
     manager
       .create_table(schema_for(crate::db::entities::tasks::Entity, backend))
+      .await?;
+    manager
+      .create_index(
+        Index::create()
+          .name("idx-tasks-link")
+          .table(crate::db::entities::tasks::Entity)
+          .col(crate::db::entities::tasks::Column::Link)
+          .unique()
+          .to_owned(),
+      )
       .await
   }
 
@@ -87,6 +97,7 @@ mod tests {
       source_id: ActiveValue::NotSet,
       title: ActiveValue::Set("title".to_owned()),
       description: ActiveValue::Set("desc".to_owned()),
+      link: ActiveValue::NotSet,
       status: ActiveValue::NotSet,
       priority: ActiveValue::NotSet,
       retries: ActiveValue::NotSet,
