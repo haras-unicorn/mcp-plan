@@ -22,77 +22,13 @@ pub mod service;
 #[cfg(test)]
 pub mod test;
 
-pub use migration::{MigrationRunner, Migrator};
-
-use models::{NewTask, TaskStatus, TaskUpdate};
+use models::*;
 use rmcp::{
-  Json, handler::server::wrapper::Parameters, model::ErrorData,
-  schemars::JsonSchema, tool, tool_router,
+  Json, handler::server::wrapper::Parameters, model::ErrorData, tool,
+  tool_router,
 };
-use serde::Deserialize;
 use service::Service;
 use std::time::Instant;
-
-/// Input for the `task` tool.
-#[derive(Debug, Clone, Deserialize, JsonSchema)]
-#[schemars(crate = "rmcp::schemars")]
-pub struct TaskInput {
-  pub id: Option<String>,
-  pub link: Option<String>,
-}
-
-/// Input for the `children` tool.
-#[derive(Debug, Clone, Default, Deserialize, JsonSchema)]
-#[schemars(crate = "rmcp::schemars")]
-pub struct ChildrenInput {
-  pub parent_id: Option<String>,
-}
-
-/// Input for the `insert` tool.
-#[derive(Debug, Clone, Deserialize, JsonSchema)]
-#[schemars(crate = "rmcp::schemars")]
-pub struct InsertInput {
-  pub object: NewTask,
-  pub parent_id: Option<String>,
-}
-
-/// Output of the `insert` tool.
-#[derive(Debug, Clone, serde::Serialize, JsonSchema)]
-#[schemars(crate = "rmcp::schemars")]
-pub struct InsertOutput {
-  pub id: String,
-}
-
-/// Input for the `complete` tool.
-#[derive(Debug, Clone, Deserialize, JsonSchema)]
-#[schemars(crate = "rmcp::schemars")]
-pub struct CompleteInput {
-  pub task_id: String,
-  pub status: String,
-}
-
-/// Input for the `fail` tool.
-#[derive(Debug, Clone, Deserialize, JsonSchema)]
-#[schemars(crate = "rmcp::schemars")]
-pub struct FailInput {
-  pub task_id: String,
-  pub status: String,
-}
-
-/// Input for the `escalate` tool.
-#[derive(Debug, Clone, Deserialize, JsonSchema)]
-#[schemars(crate = "rmcp::schemars")]
-pub struct EscalateInput {
-  pub task_id: String,
-}
-
-/// Input for the `ready` tool.
-#[derive(Debug, Clone, Deserialize, JsonSchema)]
-#[schemars(crate = "rmcp::schemars")]
-pub struct ReadyInput {
-  pub task_id: String,
-  pub object: TaskUpdate,
-}
 
 /// MCP server that provides planning tooling.
 #[derive(Debug, Clone)]
@@ -110,7 +46,7 @@ impl PlanServer {
   pub async fn task(
     &self,
     Parameters(input): Parameters<TaskInput>,
-  ) -> Result<Json<models::Task>, ErrorData> {
+  ) -> Result<Json<TaskOutput>, ErrorData> {
     let started = Instant::now();
 
     let reference = match (&input.id, &input.link) {
@@ -178,7 +114,7 @@ impl PlanServer {
 
   /// Return all sources, ordered by id.
   #[tool(name = "sources", description = "Return all sources, ordered by id.")]
-  pub async fn sources(&self) -> Result<Json<Vec<models::Source>>, ErrorData> {
+  pub async fn sources(&self) -> Result<Json<Vec<SourceOutput>>, ErrorData> {
     let started = Instant::now();
     match self.service.sources().await {
       Ok(list) => {
@@ -210,7 +146,7 @@ impl PlanServer {
   pub async fn children(
     &self,
     Parameters(input): Parameters<ChildrenInput>,
-  ) -> Result<Json<Vec<models::TaskSummary>>, ErrorData> {
+  ) -> Result<Json<Vec<ChildrenTaskOutput>>, ErrorData> {
     let started = Instant::now();
     match self.service.children(input.parent_id.as_deref()).await {
       Ok(list) => {
@@ -247,7 +183,17 @@ impl PlanServer {
     let started = Instant::now();
     match self
       .service
-      .insert(input.object, input.parent_id.as_deref())
+      .insert(InsertInput {
+        title: input.title,
+        description: input.description,
+        source_id: input.source_id,
+        parent_id: input.parent_id.clone(),
+        priority: input.priority,
+        link: input.link,
+        estimated_tokens_in: input.estimated_tokens_in,
+        estimated_tokens_reasoning: input.estimated_tokens_reasoning,
+        estimated_tokens_out: input.estimated_tokens_out,
+      })
       .await
     {
       Ok(id) => {
@@ -285,11 +231,11 @@ impl PlanServer {
   pub async fn complete(
     &self,
     Parameters(input): Parameters<CompleteInput>,
-  ) -> Result<Json<models::Task>, ErrorData> {
+  ) -> Result<Json<TaskOutput>, ErrorData> {
     let started = Instant::now();
-    let status = match TaskStatus::from(input.status.as_str()) {
-      TaskStatus::Success => TaskStatus::Success,
-      TaskStatus::Failure => TaskStatus::Failure,
+    let status = match TaskStatus::try_from(input.status.as_str()) {
+      Ok(TaskStatus::Success) => TaskStatus::Success,
+      Ok(TaskStatus::Failure) => TaskStatus::Failure,
       _ => {
         tracing::warn!(
           tool = "complete",
@@ -336,7 +282,7 @@ impl PlanServer {
   pub async fn fail(
     &self,
     Parameters(input): Parameters<FailInput>,
-  ) -> Result<Json<models::Task>, ErrorData> {
+  ) -> Result<Json<TaskOutput>, ErrorData> {
     let started = Instant::now();
     if input.status.trim().is_empty() {
       tracing::warn!(
@@ -387,7 +333,7 @@ impl PlanServer {
   pub async fn escalate(
     &self,
     Parameters(input): Parameters<EscalateInput>,
-  ) -> Result<Json<models::Task>, ErrorData> {
+  ) -> Result<Json<TaskOutput>, ErrorData> {
     let started = Instant::now();
     match self.service.escalate(&input.task_id).await {
       Ok(task) => {
@@ -420,13 +366,26 @@ impl PlanServer {
   pub async fn ready(
     &self,
     Parameters(input): Parameters<ReadyInput>,
-  ) -> Result<Json<models::Task>, ErrorData> {
+  ) -> Result<Json<TaskOutput>, ErrorData> {
     let started = Instant::now();
-    match self.service.ready(&input.task_id, input.object).await {
+    match self
+      .service
+      .ready(ReadyInput {
+        id: input.id.clone(),
+        title: input.title,
+        description: input.description,
+        priority: input.priority,
+        link: input.link,
+        estimated_tokens_in: input.estimated_tokens_in,
+        estimated_tokens_reasoning: input.estimated_tokens_reasoning,
+        estimated_tokens_out: input.estimated_tokens_out,
+      })
+      .await
+    {
       Ok(task) => {
         tracing::info!(
           tool = "ready",
-          task_id = %input.task_id,
+          task_id = %input.id,
           duration_ms = started.elapsed().as_millis() as u64,
           message = "tool `ready` completed",
         );
@@ -435,7 +394,7 @@ impl PlanServer {
       Err(e) => {
         tracing::error!(
           tool = "ready",
-          task_id = %input.task_id,
+          task_id = %input.id,
           duration_ms = started.elapsed().as_millis() as u64,
           error = %e,
           message = "tool `ready` failed",
@@ -450,9 +409,7 @@ impl PlanServer {
     name = "queue",
     description = "Return tasks needing work, sorted by priority then planning→execution."
   )]
-  pub async fn queue(
-    &self,
-  ) -> Result<Json<Vec<models::QueuedTask>>, ErrorData> {
+  pub async fn queue(&self) -> Result<Json<Vec<QueueTaskOutput>>, ErrorData> {
     let started = Instant::now();
     match self.service.queue().await {
       Ok(list) => {

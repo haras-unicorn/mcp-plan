@@ -17,7 +17,7 @@ task({ id?: string, link?: string })
 {
   "id": "…",
   "parent_id": null,
-  "source_id": null,
+  "source_id": "gh",
   "link": "https://example.com/task-42",
   "title": "Research the API",
   "description": "Read .md docs, list endpoints",
@@ -27,7 +27,7 @@ task({ id?: string, link?: string })
   "created_at": "…",
   "updated_at": "…",
   "estimated_tokens_in": 4000,
-  "estimated_tokens_reasoning": null,
+  "estimated_tokens_reasoning": 2000,
   "estimated_tokens_out": 800
 }
 ```
@@ -44,7 +44,7 @@ Fields: `id`, `parent_id`, `source_id`, `link`, `title`, `description`,
 Returns every configured source, ordered by id.
 
 ```text
-sources({})
+sources()
 ```
 
 ```json
@@ -75,26 +75,35 @@ children({ parent_id?: string })
     "status": "ready",
     "priority": "high",
     "estimated_tokens_in": 1200,
-    "estimated_tokens_reasoning": null,
+    "estimated_tokens_reasoning": 600,
     "estimated_tokens_out": 400
   }
 ]
 ```
 
-## `insert(object, parent_id?)` — create a task
+## `insert(...)` — create a task
 
 Inserts a new task with `status='ready'` and returns its `id`.
 
 ```text
-insert({ object: task, parent_id?: string })
+insert({
+  title: string,
+  description: string,
+  source_id: string,
+  parent_id?: string,
+  priority?: "critical" | "high" | "medium" | "low",
+  link?: string,
+  estimated_tokens_in: integer,
+  estimated_tokens_reasoning: integer,
+  estimated_tokens_out: integer
+})
 ```
 
-`object` fields: `title` (required), `description`, `priority`, `source_id`,
-`link`, `estimated_tokens_in`, `estimated_tokens_reasoning`,
-`estimated_tokens_out`.
-
-`link` is optional and unique when set: no two tasks may share the same `link`.
-If a task with the same `link` already exists, the insert is rejected.
+`title`, `description`, `source_id` and the three `estimated_tokens_*` fields
+are required. `priority` defaults to `medium`; `parent_id` and `link` are
+optional. `link` is unique when set, so inserting a task that shares an existing
+`link` is rejected by the database. A `parent_id` that does not exist is
+rejected as well.
 
 ```json
 { "id": "…" }
@@ -106,7 +115,7 @@ Sets `status` to `success` or `failure`. Returns the updated task. Any other
 value is rejected.
 
 ```text
-complete({ task_id: string, status: string })
+complete({ task_id: string, status: "success" | "failure" })
 ```
 
 ## `fail(task_id, status)` — record a failure
@@ -128,17 +137,23 @@ a human clears them (via `ready`).
 escalate({ task_id: string })
 ```
 
-## `ready(object, task_id)` — update and requeue
+## `ready(id, ...)` — update and requeue
 
-Updates mutable fields (`title`, `description`, `priority`, `link`,
-`estimated_tokens_*`) and sets `status` back to `ready`. Returns the updated
-task.
+Updates mutable fields and sets `status` back to `ready`. Returns the updated
+task. Every field except `id` is optional and only those provided are updated.
 
 ```text
-ready({ task_id: string, object: task })
+ready({
+  id: string,
+  title?: string,
+  description?: string,
+  priority?: "critical" | "high" | "medium" | "low",
+  link?: string,
+  estimated_tokens_in?: integer,
+  estimated_tokens_reasoning?: integer,
+  estimated_tokens_out?: integer
+})
 ```
-
-`object` accepts any subset of the mutable fields.
 
 ## `queue()` — tasks needing work
 
@@ -150,19 +165,26 @@ Excludes `success` and `escalated` tasks. Failed tasks whose `retries` reach
 `max_retries` are automatically escalated and omitted.
 
 ```text
-queue({})
+queue()
 ```
 
 ```json
 [
   {
-    "task": {
-      "id": "…",
-      "title": "…",
-      "status": "ready",
-      "priority": "critical",
-      "…": "…"
-    },
+    "id": "…",
+    "parent_id": null,
+    "source_id": "gh",
+    "link": null,
+    "title": "…",
+    "description": "…",
+    "status": "ready",
+    "priority": "critical",
+    "retries": 0,
+    "created_at": "…",
+    "updated_at": "…",
+    "estimated_tokens_in": 0,
+    "estimated_tokens_reasoning": 0,
+    "estimated_tokens_out": 0,
     "kind": "planning",
     "duration_secs": 852
   }
