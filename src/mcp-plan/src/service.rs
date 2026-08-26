@@ -4,10 +4,7 @@
 
 use crate::config::{Config, RuntimeConfig};
 use crate::db::entities::tasks;
-use crate::models::{
-  NewTask, QueuedTask, Source, Task, TaskPriority, TaskStatus, TaskSummary,
-  TaskType, TaskUpdate,
-};
+use crate::models::*;
 use chrono::Utc;
 use sea_orm::ActiveModelTrait as _;
 use sea_orm::{
@@ -71,31 +68,11 @@ impl Service {
     Self { db, config }
   }
 
-  /// Fetch a single task by id.
-  pub async fn task(&self, id: &str) -> Result<Option<Task>, ServiceError> {
-    let model = tasks::Entity::find_by_id(id.to_owned())
-      .one(&self.db)
-      .await?;
-    Ok(model.map(Task::from))
-  }
-
-  /// Fetch a single task by its unique `link`.
-  pub async fn task_by_link(
-    &self,
-    link: &str,
-  ) -> Result<Option<Task>, ServiceError> {
-    let model = tasks::Entity::find()
-      .filter(tasks::Column::Link.eq(link))
-      .one(&self.db)
-      .await?;
-    Ok(model.map(Task::from))
-  }
-
   /// Fetch a single task by either its `id` or its unique `link`.
   pub async fn task_ref(
     &self,
     reference: TaskRef,
-  ) -> Result<Option<Task>, ServiceError> {
+  ) -> Result<Option<TaskOutput>, ServiceError> {
     let model = match reference {
       TaskRef::Id(id) => tasks::Entity::find_by_id(id).one(&self.db).await?,
       TaskRef::Link(link) => {
@@ -105,17 +82,17 @@ impl Service {
           .await?
       }
     };
-    Ok(model.map(Task::from))
+    Ok(model.map(TaskOutput::from))
   }
 
   /// Fetch all sources, ordered by id.
-  pub async fn sources(&self) -> Result<Vec<Source>, ServiceError> {
+  pub async fn sources(&self) -> Result<Vec<SourceOutput>, ServiceError> {
     use crate::db::entities::sources;
     let models = sources::Entity::find()
       .order_by_asc(sources::Column::Id)
       .all(&self.db)
       .await?;
-    Ok(models.into_iter().map(Source::from).collect())
+    Ok(models.into_iter().map(SourceOutput::from).collect())
   }
 
   /// Insert each statically configured source that is not already present in
@@ -159,7 +136,7 @@ impl Service {
   pub async fn children(
     &self,
     parent_id: Option<&str>,
-  ) -> Result<Vec<TaskSummary>, ServiceError> {
+  ) -> Result<Vec<ChildrenTaskOutput>, ServiceError> {
     let mut query = tasks::Entity::find();
     match parent_id {
       Some(parent) => {
@@ -173,16 +150,16 @@ impl Service {
       .order_by_asc(tasks::Column::CreatedAt)
       .all(&self.db)
       .await?;
-    Ok(models.iter().map(TaskSummary::from).collect())
+    Ok(models.iter().map(ChildrenTaskOutput::from).collect())
   }
 
   /// Insert a new task. Returns the generated id. Status starts at `ready`.
   pub async fn insert(
     &self,
-    new_task: NewTask,
-    parent_id: Option<&str>,
+    task: InsertInput,
   ) -> Result<String, ServiceError> {
-    if let Some(parent) = parent_id
+    let parent_id = task.parent_id;
+    if let Some(parent) = parent_id.clone()
       && tasks::Entity::find_by_id(parent.to_owned())
         .one(&self.db)
         .await?
@@ -196,21 +173,21 @@ impl Service {
     let now = Utc::now();
     let model = tasks::ActiveModel {
       id: ActiveValue::Set(uuid::Uuid::new_v4().to_string()),
-      parent_id: ActiveValue::Set(parent_id.map(ToOwned::to_owned)),
-      source_id: ActiveValue::Set(new_task.source_id),
-      link: ActiveValue::Set(new_task.link),
-      title: ActiveValue::Set(new_task.title),
-      description: ActiveValue::Set(new_task.description),
-      status: ActiveValue::Set(TaskStatus::Ready.as_str().to_owned()),
-      priority: ActiveValue::Set(new_task.priority.as_str().to_owned()),
+      parent_id: ActiveValue::Set(parent_id),
+      source_id: ActiveValue::Set(task.source_id),
+      link: ActiveValue::Set(task.link),
+      title: ActiveValue::Set(task.title),
+      description: ActiveValue::Set(task.description),
+      status: ActiveValue::Set(tasks::TaskStatus::Ready),
+      priority: ActiveValue::Set(tasks::TaskPriority::from(task.priority)),
       retries: ActiveValue::Set(0),
-      created_at: ActiveValue::Set(Some(now)),
-      updated_at: ActiveValue::Set(Some(now)),
-      estimated_tokens_in: ActiveValue::Set(new_task.estimated_tokens_in),
+      created_at: ActiveValue::Set(now),
+      updated_at: ActiveValue::Set(now),
+      estimated_tokens_in: ActiveValue::Set(task.estimated_tokens_in),
       estimated_tokens_reasoning: ActiveValue::Set(
-        new_task.estimated_tokens_reasoning,
+        task.estimated_tokens_reasoning,
       ),
-      estimated_tokens_out: ActiveValue::Set(new_task.estimated_tokens_out),
+      estimated_tokens_out: ActiveValue::Set(task.estimated_tokens_out),
     };
     let saved = model.insert(&self.db).await?;
     Ok(saved.id)
@@ -221,7 +198,7 @@ impl Service {
     &self,
     task_id: &str,
     status: TaskStatus,
-  ) -> Result<Task, ServiceError> {
+  ) -> Result<TaskOutput, ServiceError> {
     if status == TaskStatus::Ready || status == TaskStatus::Escalated {
       return Err(ServiceError::NotFound(
         "`complete` only accepts `success` or `failure`".to_owned(),
@@ -233,7 +210,7 @@ impl Service {
   /// Increment `retries` and mark as `failure` (per `fail()`). When retries
   /// reach the configured `RuntimeConfig::max_retries`, the task is escalated
   /// instead. Returns the updated task.
-  pub async fn fail(&self, task_id: &str) -> Result<Task, ServiceError> {
+  pub async fn fail(&self, task_id: &str) -> Result<TaskOutput, ServiceError> {
     let model = self.load(task_id).await?;
     let retries = model.retries.saturating_add(1);
     let limit =
@@ -244,11 +221,11 @@ impl Service {
       TaskStatus::Failure
     };
 
-    let mut am: tasks::ActiveModel = model.into();
-    am.retries = ActiveValue::Set(retries);
-    am.status = ActiveValue::Set(status.as_str().to_owned());
-    am.updated_at = ActiveValue::Set(Some(Utc::now()));
-    let saved = am.update(&self.db).await?;
+    let mut active_model: tasks::ActiveModel = model.into();
+    active_model.retries = ActiveValue::Set(retries);
+    active_model.status = ActiveValue::Set(tasks::TaskStatus::from(status));
+    active_model.updated_at = ActiveValue::Set(Utc::now());
+    let saved = active_model.update(&self.db).await?;
     if status == TaskStatus::Escalated {
       tracing::warn!(
         task_id,
@@ -257,79 +234,83 @@ impl Service {
         "task escalated after exhausting retries"
       );
     }
-    Ok(Task::from(saved))
+    Ok(TaskOutput::from(saved))
   }
 
   /// Mark a task as `escalated`.
-  pub async fn escalate(&self, task_id: &str) -> Result<Task, ServiceError> {
+  pub async fn escalate(
+    &self,
+    task_id: &str,
+  ) -> Result<TaskOutput, ServiceError> {
     self.update_status(task_id, TaskStatus::Escalated).await
   }
 
   /// Update mutable fields and set status back to `ready`.
   pub async fn ready(
     &self,
-    task_id: &str,
-    update: TaskUpdate,
-  ) -> Result<Task, ServiceError> {
+    update: ReadyInput,
+  ) -> Result<TaskOutput, ServiceError> {
+    let task_id = update.id;
     let model = tasks::Entity::find_by_id(task_id.to_owned())
       .one(&self.db)
       .await?
       .ok_or_else(|| {
         ServiceError::NotFound(format!("task `{task_id}` not found"))
       })?;
-    let mut am: tasks::ActiveModel = model.into();
+    let mut active_model: tasks::ActiveModel = model.into();
     if let Some(title) = update.title {
-      am.title = ActiveValue::Set(title);
+      active_model.title = ActiveValue::Set(title);
     }
     if let Some(description) = update.description {
-      am.description = ActiveValue::Set(description);
+      active_model.description = ActiveValue::Set(description);
     }
     if let Some(priority) = update.priority {
-      am.priority = ActiveValue::Set(priority.as_str().to_owned());
+      active_model.priority =
+        ActiveValue::Set(tasks::TaskPriority::from(priority));
     }
     if let Some(link) = update.link {
-      am.link = ActiveValue::Set(Some(link));
+      active_model.link = ActiveValue::Set(Some(link));
     }
     if let Some(v) = update.estimated_tokens_in {
-      am.estimated_tokens_in = ActiveValue::Set(Some(v));
+      active_model.estimated_tokens_in = ActiveValue::Set(v);
     }
     if let Some(v) = update.estimated_tokens_reasoning {
-      am.estimated_tokens_reasoning = ActiveValue::Set(Some(v));
+      active_model.estimated_tokens_reasoning = ActiveValue::Set(v);
     }
     if let Some(v) = update.estimated_tokens_out {
-      am.estimated_tokens_out = ActiveValue::Set(Some(v));
+      active_model.estimated_tokens_out = ActiveValue::Set(v);
     }
-    am.status = ActiveValue::Set(TaskStatus::Ready.as_str().to_owned());
-    am.updated_at = ActiveValue::Set(Some(Utc::now()));
-    let saved = am.update(&self.db).await?;
-    Ok(Task::from(saved))
+    active_model.status = ActiveValue::Set(tasks::TaskStatus::Ready);
+    active_model.updated_at = ActiveValue::Set(Utc::now());
+    let saved = active_model.update(&self.db).await?;
+    Ok(TaskOutput::from(saved))
   }
 
   /// The `queue()` engine: returns tasks needing work, sorted by priority then
   /// type (planning → ready), bounded by `config.queue_limit`.
-  pub async fn queue(&self) -> Result<Vec<QueuedTask>, ServiceError> {
+  pub async fn queue(&self) -> Result<Vec<QueueTaskOutput>, ServiceError> {
     let config = &self.config.runtime;
     let max_retries = i32::try_from(config.max_retries).unwrap_or(i32::MAX);
     let models = tasks::Entity::find()
       .filter(
         Condition::all()
-          .add(tasks::Column::Status.ne(TaskStatus::Success.as_str()))
-          .add(tasks::Column::Status.ne(TaskStatus::Escalated.as_str())),
+          .add(tasks::Column::Status.ne(tasks::TaskStatus::Success))
+          .add(tasks::Column::Status.ne(tasks::TaskStatus::Escalated)),
       )
       .all(&self.db)
       .await?;
 
     let mut escalated: Vec<String> = Vec::new();
-    let mut result: Vec<QueuedTask> = Vec::with_capacity(models.len());
+    let mut result: Vec<QueueTaskOutput> = Vec::with_capacity(models.len());
     for model in models {
-      if model.status == TaskStatus::Failure.as_str()
+      if model.status == tasks::TaskStatus::Failure
         && model.retries >= max_retries
       {
         let id = model.id.clone();
-        let mut am: tasks::ActiveModel = model.into();
-        am.status = ActiveValue::Set(TaskStatus::Escalated.as_str().to_owned());
-        am.updated_at = ActiveValue::Set(Some(Utc::now()));
-        am.update(&self.db).await?;
+        let mut active_model: tasks::ActiveModel = model.into();
+        active_model.status = ActiveValue::Set(tasks::TaskStatus::Escalated);
+        active_model.updated_at = ActiveValue::Set(Utc::now());
+        active_model.update(&self.db).await?;
         escalated.push(id);
         continue;
       }
@@ -340,18 +321,31 @@ impl Service {
       } else {
         TaskType::Execution
       };
-      result.push(QueuedTask {
+      result.push(QueueTaskOutput {
         duration_secs,
         kind,
-        task: Task::from(model),
+        id: model.id,
+        parent_id: model.parent_id,
+        source_id: model.source_id,
+        link: model.link,
+        title: model.title,
+        description: model.description,
+        status: TaskStatus::from(model.status),
+        priority: TaskPriority::from(model.priority),
+        retries: model.retries,
+        created_at: model.created_at,
+        updated_at: model.updated_at,
+        estimated_tokens_in: model.estimated_tokens_in,
+        estimated_tokens_reasoning: model.estimated_tokens_reasoning,
+        estimated_tokens_out: model.estimated_tokens_out,
       });
     }
 
     result.sort_by(|a, b| {
-      priority_rank(a.task.priority)
-        .cmp(&priority_rank(b.task.priority))
+      priority_rank(a.priority)
+        .cmp(&priority_rank(b.priority))
         .then_with(|| kind_rank(a.kind).cmp(&kind_rank(b.kind)))
-        .then_with(|| a.task.id.cmp(&b.task.id))
+        .then_with(|| a.id.cmp(&b.id))
     });
 
     let total = result.len();
@@ -384,13 +378,13 @@ impl Service {
     &self,
     task_id: &str,
     status: TaskStatus,
-  ) -> Result<Task, ServiceError> {
+  ) -> Result<TaskOutput, ServiceError> {
     let model = self.load(task_id).await?;
-    let mut am: tasks::ActiveModel = model.into();
-    am.status = ActiveValue::Set(status.as_str().to_owned());
-    am.updated_at = ActiveValue::Set(Some(Utc::now()));
-    let saved = am.update(&self.db).await?;
-    Ok(Task::from(saved))
+    let mut active_model: tasks::ActiveModel = model.into();
+    active_model.status = ActiveValue::Set(tasks::TaskStatus::from(status));
+    active_model.updated_at = ActiveValue::Set(Utc::now());
+    let saved = active_model.update(&self.db).await?;
+    Ok(TaskOutput::from(saved))
   }
 }
 
@@ -400,11 +394,10 @@ pub fn calculate_duration(model: &tasks::Model, config: &RuntimeConfig) -> u64 {
   let tps_in = i64::try_from(config.tps_in).unwrap_or(i64::MAX).max(1);
   let tps_out = i64::try_from(config.tps_out).unwrap_or(i64::MAX).max(1);
 
-  let in_tokens = model.estimated_tokens_in.unwrap_or(0);
+  let in_tokens = model.estimated_tokens_in;
   let out_tokens = model
     .estimated_tokens_reasoning
-    .unwrap_or(0)
-    .saturating_add(model.estimated_tokens_out.unwrap_or(0));
+    .saturating_add(model.estimated_tokens_out);
 
   let in_secs = in_tokens.checked_div(tps_in).unwrap_or(0);
   let out_secs = out_tokens.checked_div(tps_out).unwrap_or(0);
@@ -431,6 +424,7 @@ fn kind_rank(kind: TaskType) -> u8 {
 mod tests {
   use super::*;
   use crate::config::DatabaseConfig;
+  use crate::db::entities::sources;
   use crate::migration::Migrator;
   use sea_orm::DatabaseConnection;
   use sea_orm_migration::MigratorTrait;
@@ -564,30 +558,39 @@ mod tests {
     envs
   }
 
-  async fn seed_root(service: &Service, title: &str) -> String {
-    seed_with_tokens(service, title, None, None).await
+  async fn seed_source(service: &Service, title: &str) -> String {
+    let model = sources::ActiveModel {
+      id: ActiveValue::Set(uuid::Uuid::new_v4().to_string()),
+      title: ActiveValue::Set(title.to_owned()),
+      description: ActiveValue::Set("".to_owned()),
+      source_type: ActiveValue::Set("".to_owned()),
+    };
+    let source = model.insert(&service.db).await.expect("insert");
+    source.id
   }
 
-  async fn seed_with_tokens(
+  async fn seed_root_task(service: &Service, title: &str) -> String {
+    seed_task(service, title, 0, 0).await
+  }
+
+  async fn seed_task(
     service: &Service,
     title: &str,
-    stdin: Option<i64>,
-    stdout: Option<i64>,
+    stdin: i64,
+    stdout: i64,
   ) -> String {
     service
-      .insert(
-        NewTask {
-          title: title.to_owned(),
-          description: "".to_owned(),
-          priority: TaskPriority::Medium,
-          source_id: None,
-          link: None,
-          estimated_tokens_in: stdin,
-          estimated_tokens_reasoning: None,
-          estimated_tokens_out: stdout,
-        },
-        None,
-      )
+      .insert(InsertInput {
+        title: title.to_owned(),
+        description: "".to_owned(),
+        priority: TaskPriority::Medium,
+        parent_id: None,
+        source_id: seed_source(service, title).await,
+        link: None,
+        estimated_tokens_in: stdin,
+        estimated_tokens_reasoning: 0,
+        estimated_tokens_out: stdout,
+      })
       .await
       .expect("insert")
   }
@@ -596,14 +599,16 @@ mod tests {
   async fn insert_and_fetch() {
     for env in environments().await {
       let service = &env.service;
-      let id = seed_with_tokens(service, "root", Some(100), None).await;
-      let fetched = service.task(&id).await.expect("fetch").expect("some");
+      let id = seed_task(service, "root", 100, 0).await;
+      let fetched = service
+        .task_ref(TaskRef::Id(id))
+        .await
+        .expect("fetch")
+        .expect("some");
       assert_eq!(fetched.title, "root");
       assert_eq!(fetched.status, TaskStatus::Ready);
       assert_eq!(fetched.priority, TaskPriority::Medium);
       assert_eq!(fetched.retries, 0);
-      assert!(fetched.created_at.is_some());
-      assert!(fetched.updated_at.is_some());
     }
   }
 
@@ -613,23 +618,25 @@ mod tests {
       let service = &env.service;
       let link = "https://example.com/x".to_owned();
       let id = service
-        .insert(
-          NewTask {
-            title: "linked".to_owned(),
-            description: "".to_owned(),
-            priority: TaskPriority::Medium,
-            source_id: None,
-            link: Some(link.clone()),
-            estimated_tokens_in: None,
-            estimated_tokens_reasoning: None,
-            estimated_tokens_out: None,
-          },
-          None,
-        )
+        .insert(InsertInput {
+          title: "linked".to_owned(),
+          description: "".to_owned(),
+          priority: TaskPriority::Medium,
+          source_id: seed_source(service, "linked").await,
+          parent_id: None,
+          link: Some(link.clone()),
+          estimated_tokens_in: 0,
+          estimated_tokens_reasoning: 0,
+          estimated_tokens_out: 0,
+        })
         .await
         .expect("insert");
 
-      let by_id = service.task(&id).await.expect("by id").expect("some");
+      let by_id = service
+        .task_ref(TaskRef::Id(id.clone()))
+        .await
+        .expect("by id")
+        .expect("some");
       assert_eq!(by_id.link.as_deref(), Some(link.as_str()));
 
       let by_ref_id = service
@@ -658,49 +665,45 @@ mod tests {
   async fn root_children_and_scoped_children() {
     for env in environments().await {
       let service = &env.service;
-      let root = seed_root(service, "root").await;
+      let root = seed_root_task(service, "root").await;
       let child_a = service
-        .insert(
-          NewTask {
-            title: "a".to_owned(),
-            description: "".to_owned(),
-            priority: TaskPriority::High,
-            source_id: None,
-            link: None,
-            estimated_tokens_in: None,
-            estimated_tokens_reasoning: None,
-            estimated_tokens_out: None,
-          },
-          Some(&root),
-        )
+        .insert(InsertInput {
+          title: "a".to_owned(),
+          description: "".to_owned(),
+          priority: TaskPriority::High,
+          source_id: seed_source(service, "a").await,
+          parent_id: Some(root.clone()),
+          link: None,
+          estimated_tokens_in: 0,
+          estimated_tokens_reasoning: 0,
+          estimated_tokens_out: 0,
+        })
         .await
         .expect("child a");
       let child_b = service
-        .insert(
-          NewTask {
-            title: "b".to_owned(),
-            description: "".to_owned(),
-            priority: TaskPriority::Low,
-            source_id: None,
-            link: None,
-            estimated_tokens_in: None,
-            estimated_tokens_reasoning: None,
-            estimated_tokens_out: None,
-          },
-          Some(&root),
-        )
+        .insert(InsertInput {
+          title: "b".to_owned(),
+          description: "".to_owned(),
+          priority: TaskPriority::Low,
+          source_id: seed_source(service, "b").await,
+          parent_id: Some(root.clone()),
+          link: None,
+          estimated_tokens_in: 0,
+          estimated_tokens_reasoning: 0,
+          estimated_tokens_out: 0,
+        })
         .await
         .expect("child b");
 
-      let roots: Vec<TaskSummary> =
+      let roots: Vec<ChildrenTaskOutput> =
         service.children(None).await.expect("roots");
       assert_eq!(roots.len(), 1);
       assert_eq!(roots[0].id, root);
 
-      let kids: Vec<TaskSummary> =
+      let kids: Vec<ChildrenTaskOutput> =
         service.children(Some(&root)).await.expect("kids");
       assert_eq!(kids.len(), 2);
-      let by_title: std::collections::HashMap<String, &TaskSummary> =
+      let by_title: std::collections::HashMap<String, &ChildrenTaskOutput> =
         kids.iter().map(|k| (k.title.clone(), k)).collect();
       assert_eq!(by_title["a"].id, child_a);
       assert_eq!(by_title["b"].id, child_b);
@@ -711,12 +714,16 @@ mod tests {
   async fn complete_sets_status() {
     for env in environments().await {
       let service = &env.service;
-      let id = seed_root(service, "root").await;
+      let id = seed_root_task(service, "root").await;
       let _ = service
         .complete(&id, TaskStatus::Success)
         .await
         .expect("complete");
-      let fetched = service.task(&id).await.expect("fetch").expect("some");
+      let fetched = service
+        .task_ref(TaskRef::Id(id))
+        .await
+        .expect("fetch")
+        .expect("some");
       assert_eq!(fetched.status, TaskStatus::Success);
     }
   }
@@ -725,7 +732,7 @@ mod tests {
   async fn fail_increments_and_escalates_at_limit() {
     for env in environments().await {
       let service = &env.service;
-      let id = seed_root(service, "root").await;
+      let id = seed_root_task(service, "root").await;
 
       let f1 = service.fail(&id).await.expect("fail 1");
       assert_eq!(f1.retries, 1);
@@ -741,24 +748,22 @@ mod tests {
   async fn ready_updates_fields_and_status() {
     for env in environments().await {
       let service = &env.service;
-      let id = seed_root(service, "root").await;
+      let id = seed_root_task(service, "root").await;
       let updated = service
-        .ready(
-          &id,
-          TaskUpdate {
-            title: Some("renamed".to_owned()),
-            priority: Some(TaskPriority::Critical),
-            estimated_tokens_in: Some(5000),
-            estimated_tokens_out: Some(2000),
-            ..TaskUpdate::default()
-          },
-        )
+        .ready(ReadyInput {
+          id,
+          title: Some("renamed".to_owned()),
+          priority: Some(TaskPriority::Critical),
+          estimated_tokens_in: Some(5000),
+          estimated_tokens_out: Some(2000),
+          ..ReadyInput::default()
+        })
         .await
         .expect("ready");
       assert_eq!(updated.title, "renamed");
       assert_eq!(updated.priority, TaskPriority::Critical);
       assert_eq!(updated.status, TaskStatus::Ready);
-      assert_eq!(updated.estimated_tokens_in, Some(5000));
+      assert_eq!(updated.estimated_tokens_in, 5000);
     }
   }
 
@@ -767,10 +772,9 @@ mod tests {
     for env in environments().await {
       let service = &env.service;
       // Long task -> planning
-      let p_id =
-        seed_with_tokens(service, "planning", Some(60_000), Some(10_000)).await;
+      let p_id = seed_task(service, "planning", 60_000, 10_000).await;
       // Short low-priority
-      let e_id = seed_with_tokens(service, "execution", Some(10), None).await;
+      let e_id = seed_task(service, "execution", 10, 0).await;
 
       let queued = service.queue().await.expect("queue");
       assert_eq!(queued.len(), 2);
@@ -778,7 +782,7 @@ mod tests {
       assert!(kinds.contains(&TaskType::Planning));
       assert!(kinds.contains(&TaskType::Execution));
       // Planning (long) should sort before execution; same priority, planning first.
-      let ids: Vec<&str> = queued.iter().map(|q| q.task.id.as_str()).collect();
+      let ids: Vec<&str> = queued.iter().map(|q| q.id.as_str()).collect();
       assert_eq!(ids[0], p_id);
       assert_eq!(ids[1], e_id);
     }
@@ -788,18 +792,18 @@ mod tests {
   async fn queue_excludes_success_and_escalated() {
     for env in environments().await {
       let service = &env.service;
-      let done = seed_root(service, "done").await;
-      let esc = seed_root(service, "esc").await;
+      let done = seed_root_task(service, "done").await;
+      let esc = seed_root_task(service, "esc").await;
       let _ = service
         .complete(&done, TaskStatus::Success)
         .await
         .expect("done");
       let _ = service.escalate(&esc).await.expect("esc");
-      let _ = seed_root(service, "active").await;
+      let _ = seed_root_task(service, "active").await;
 
       let queued = service.queue().await.expect("queue");
       assert_eq!(queued.len(), 1);
-      assert_eq!(queued[0].task.title, "active");
+      assert_eq!(queued[0].title, "active");
     }
   }
 
@@ -808,7 +812,7 @@ mod tests {
     for env in environments().await {
       let service = &env.service;
       for i in 0..25 {
-        seed_root(service, &format!("t{i}")).await;
+        seed_root_task(service, &format!("t{i}")).await;
       }
       let queued = service.queue().await.expect("queue");
       assert_eq!(queued.len(), 10);
@@ -819,14 +823,14 @@ mod tests {
   async fn queue_escalates_exhausted_failures() {
     for env in environments().await {
       let service = &env.service;
-      let id = seed_root(service, "sick").await;
+      let id = seed_root_task(service, "sick").await;
 
       use sea_orm::Set;
       let model = service.load(&id).await.expect("load");
-      let mut am: tasks::ActiveModel = model.into();
-      am.retries = Set(2);
-      am.status = Set("failure".to_owned());
-      am.update(&service.db).await.expect("update");
+      let mut active_model: tasks::ActiveModel = model.into();
+      active_model.retries = Set(2);
+      active_model.status = Set(tasks::TaskStatus::Failure);
+      active_model.update(&service.db).await.expect("update");
 
       let queued = service.queue().await.expect("queue");
       assert!(
@@ -835,7 +839,7 @@ mod tests {
       );
 
       let fetched = service.load(&id).await.expect("fetch");
-      assert_eq!(fetched.status, "escalated");
+      assert_eq!(fetched.status, tasks::TaskStatus::Escalated);
     }
   }
 
@@ -943,18 +947,18 @@ mod tests {
     let model = tasks::Model {
       id: "t".to_owned(),
       parent_id: None,
-      source_id: None,
+      source_id: "".to_owned(),
       link: None,
       title: "".to_owned(),
       description: "".to_owned(),
-      status: "ready".to_owned(),
-      priority: "medium".to_owned(),
+      status: tasks::TaskStatus::Ready,
+      priority: tasks::TaskPriority::Medium,
       retries: 0,
-      created_at: None,
-      updated_at: None,
-      estimated_tokens_in: Some(100),
-      estimated_tokens_reasoning: Some(50),
-      estimated_tokens_out: Some(10),
+      created_at: chrono::Utc::now(),
+      updated_at: chrono::Utc::now(),
+      estimated_tokens_in: 100,
+      estimated_tokens_reasoning: 50,
+      estimated_tokens_out: 10,
     };
     // in: 100 / 100 = 1s, out: (50+10)/(20)=3s -> total 4s
     assert_eq!(calculate_duration(&model, &cfg), 4);

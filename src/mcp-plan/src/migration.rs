@@ -26,6 +26,16 @@ pub struct CreateInitialSchema;
 impl MigrationTrait for CreateInitialSchema {
   async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
     let backend = manager.get_database_backend();
+    // Postgres stores enum columns as native types which must exist before
+    // the tables referencing them are created. SQLite and MySQL inline the
+    // enum into the column definition and generate no statements here.
+    if backend == DbBackend::Postgres {
+      for statement in Schema::new(backend)
+        .create_enum_from_entity(crate::db::entities::tasks::Entity)
+      {
+        manager.exec_stmt(statement).await?;
+      }
+    }
     manager
       .create_table(schema_for(crate::db::entities::sources::Entity, backend))
       .await?;
@@ -50,7 +60,25 @@ impl MigrationTrait for CreateInitialSchema {
       .await?;
     manager
       .drop_table(Table::drop().table("sources").to_owned())
-      .await
+      .await?;
+
+    // Drop the postgres enum types created in `up`, now that no table
+    // references them any more. SQLite and MySQL have no separate types.
+    let backend = manager.get_database_backend();
+    if backend == DbBackend::Postgres {
+      for name in ["task_status", "task_priority"] {
+        manager
+          .drop_type(
+            extension::postgres::Type::drop()
+              .name(name)
+              .if_exists()
+              .to_owned(),
+          )
+          .await?;
+      }
+    }
+
+    Ok(())
   }
 }
 
@@ -91,29 +119,42 @@ mod tests {
       );
     }
 
+    let source = crate::db::entities::sources::ActiveModel {
+      id: ActiveValue::Set("s1".to_owned()),
+      title: ActiveValue::Set("title".to_owned()),
+      description: ActiveValue::Set("desc".to_owned()),
+      source_type: ActiveValue::Set("manual".to_owned()),
+    };
+    let saved_source = source.insert(db).await?;
+
     let task = crate::db::entities::tasks::ActiveModel {
       id: ActiveValue::Set("t1".to_owned()),
       parent_id: ActiveValue::NotSet,
-      source_id: ActiveValue::NotSet,
+      source_id: ActiveValue::Set(saved_source.id),
       title: ActiveValue::Set("title".to_owned()),
       description: ActiveValue::Set("desc".to_owned()),
       link: ActiveValue::NotSet,
       status: ActiveValue::NotSet,
       priority: ActiveValue::NotSet,
       retries: ActiveValue::NotSet,
-      created_at: ActiveValue::NotSet,
-      updated_at: ActiveValue::NotSet,
-      estimated_tokens_in: ActiveValue::NotSet,
-      estimated_tokens_reasoning: ActiveValue::NotSet,
-      estimated_tokens_out: ActiveValue::NotSet,
+      created_at: ActiveValue::Set(ChronoUtc::now()),
+      updated_at: ActiveValue::Set(ChronoUtc::now()),
+      estimated_tokens_in: ActiveValue::Set(0),
+      estimated_tokens_reasoning: ActiveValue::Set(0),
+      estimated_tokens_out: ActiveValue::Set(0),
     };
-    let saved = task.insert(db).await?;
-    assert_eq!(saved.status, "ready", "status should default to `ready`");
+    let saved_task = task.insert(db).await?;
     assert_eq!(
-      saved.priority, "medium",
+      saved_task.status,
+      crate::db::entities::tasks::TaskStatus::Ready,
+      "status should default to `ready`"
+    );
+    assert_eq!(
+      saved_task.priority,
+      crate::db::entities::tasks::TaskPriority::Medium,
       "priority should default to `medium`"
     );
-    assert_eq!(saved.retries, 0, "retries should default to 0");
+    assert_eq!(saved_task.retries, 0, "retries should default to 0");
 
     Migrator::down(db, None).await?;
 
