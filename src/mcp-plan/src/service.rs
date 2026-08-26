@@ -118,6 +118,43 @@ impl Service {
     Ok(models.into_iter().map(Source::from).collect())
   }
 
+  /// Insert each statically configured source that is not already present in
+  /// the `sources` table. Existing rows are left untouched so any later user
+  /// modifications are preserved. Returns the number of rows inserted.
+  pub async fn sync_sources(&self) -> Result<usize, ServiceError> {
+    use crate::db::entities::sources;
+    use std::collections::HashSet;
+
+    if self.config.sources.is_empty() {
+      return Ok(0);
+    }
+
+    let existing: HashSet<String> = sources::Entity::find()
+      .all(&self.db)
+      .await?
+      .into_iter()
+      .map(|model| model.id)
+      .collect();
+
+    let mut inserted = Vec::new();
+    for source in &self.config.sources {
+      if existing.contains(&source.id) {
+        continue;
+      }
+      sources::Entity::insert(sources::ActiveModel {
+        id: ActiveValue::Set(source.id.clone()),
+        title: ActiveValue::Set(source.title.clone()),
+        description: ActiveValue::Set(source.description.clone()),
+        source_type: ActiveValue::Set(source.source_type.as_str().to_owned()),
+      })
+      .exec(&self.db)
+      .await?;
+      inserted.push(source.id.clone());
+    }
+
+    Ok(inserted.len())
+  }
+
   /// Fetch direct children of `parent_id`. `None` means root-level tasks.
   pub async fn children(
     &self,
@@ -834,6 +871,69 @@ mod tests {
       assert_eq!(list[0].title, "A");
       assert_eq!(list[0].source_type, "poll");
       assert_eq!(list[1].id, "b");
+    }
+  }
+
+  #[tokio::test]
+  async fn sync_sources_inserts_only_missing() {
+    use crate::config::{SourceConfig, SourceType};
+    use crate::db::entities::sources;
+    use sea_orm::ActiveValue::Set as SetValue;
+
+    for env in environments().await {
+      let db = env.service.db.clone();
+
+      let existing = sources::Entity::insert(sources::ActiveModel {
+        id: SetValue("kept".to_owned()),
+        title: SetValue("Original".to_owned()),
+        description: SetValue("user-edited".to_owned()),
+        source_type: SetValue("manual".to_owned()),
+      })
+      .exec(&db)
+      .await
+      .expect("insert existing");
+
+      let config = Config {
+        database: crate::config::DatabaseConfig::default(),
+        runtime: config(),
+        sources: vec![
+          SourceConfig {
+            id: "kept".to_owned(),
+            title: "Config title".to_owned(),
+            description: "config desc".to_owned(),
+            source_type: SourceType::Poll,
+          },
+          SourceConfig {
+            id: "new".to_owned(),
+            title: "New source".to_owned(),
+            description: "".to_owned(),
+            source_type: SourceType::Poll,
+          },
+        ],
+      };
+      let service = Service::new(db, Arc::new(config));
+
+      let inserted = service.sync_sources().await.expect("sync");
+      assert_eq!(inserted, 1, "only the missing source should be inserted");
+
+      let list = service.sources().await.expect("sources");
+      assert_eq!(list.len(), 2);
+
+      let kept_row = list.iter().find(|s| s.id == "kept").expect("kept");
+      assert_eq!(kept_row.title, "Original", "existing row must be untouched");
+      assert_eq!(kept_row.description, "user-edited");
+      assert_eq!(kept_row.source_type, "manual");
+
+      let new_row = list.iter().find(|s| s.id == "new").expect("new");
+      assert_eq!(new_row.title, "New source");
+      assert_eq!(new_row.source_type, "poll");
+
+      // Running again must not duplicate anything.
+      let again = service.sync_sources().await.expect("sync again");
+      assert_eq!(again, 0);
+      assert_eq!(service.sources().await.expect("sources").len(), 2);
+      let existing_after = existing.last_insert_id.as_str();
+      assert_eq!(existing_after, "kept");
     }
   }
 

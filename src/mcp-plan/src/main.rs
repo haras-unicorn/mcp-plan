@@ -32,6 +32,13 @@ async fn main() -> anyhow::Result<()> {
       tracing::info!("starting mcp-plan server");
       let db = connect::connect(&config).await?;
       let service = Service::new(db, Arc::new(config));
+      let inserted = service.sync_sources().await?;
+      if inserted > 0 {
+        tracing::info!(
+          sources_inserted = inserted,
+          "synced config sources into database"
+        );
+      }
       let server = PlanServer { service };
       let service = server.serve(stdio()).await?;
       tracing::info!("mcp-plan server served over stdio");
@@ -41,7 +48,9 @@ async fn main() -> anyhow::Result<()> {
     config::Command::Migrate => {
       tracing::info!("running database migrations");
       let db = connect::connect(&config).await?;
-      drop(db);
+      let service = Service::new(db, Arc::new(config));
+      service.sync_sources().await?;
+      drop(service);
       tracing::info!("Migrations completed successfully.");
     }
     config::Command::Schema { output } => {
