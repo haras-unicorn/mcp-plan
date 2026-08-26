@@ -61,6 +61,16 @@ pub enum SourceType {
   Poll,
 }
 
+impl SourceType {
+  /// The lowercase string form stored in the `sources` table.
+  pub fn as_str(self) -> &'static str {
+    match self {
+      Self::Manual => "manual",
+      Self::Poll => "poll",
+    }
+  }
+}
+
 /// A statically configured source, synced into the `sources` table.
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
