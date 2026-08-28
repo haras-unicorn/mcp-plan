@@ -58,6 +58,24 @@ sources()
 ]
 ```
 
+## `source(id)` — fetch a single source
+
+Returns an individual source by its `id`. Returns an error if no source with
+that id exists.
+
+```text
+source({ id: string })
+```
+
+```json
+{
+  "id": "gh",
+  "title": "GitHub issues",
+  "description": "fetch instructions",
+  "type": "poll"
+}
+```
+
 ## `children(parent_id?)` — list children of a task
 
 Returns a compact array of direct children. When `parent_id` is omitted (or

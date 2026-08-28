@@ -156,6 +156,13 @@ pub struct ChildrenInput {
   pub parent_id: Option<String>,
 }
 
+/// Input for the `source` tool.
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+#[schemars(crate = "rmcp::schemars")]
+pub struct SourceInput {
+  pub id: String,
+}
+
 /// Input for the `insert` tool.
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
