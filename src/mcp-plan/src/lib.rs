@@ -138,6 +138,53 @@ impl PlanServer {
     }
   }
 
+  /// Fetch a single source by id.
+  #[tool(
+    name = "source",
+    description = "Fetch a single source by id."
+  )]
+  pub async fn source(
+    &self,
+    Parameters(input): Parameters<SourceInput>,
+  ) -> Result<Json<SourceOutput>, ErrorData> {
+    let started = Instant::now();
+    let key = input.id.clone();
+
+    match self.service.source(&key).await {
+      Ok(Some(source)) => {
+        tracing::info!(
+          tool = "source",
+          source_id = %key,
+          duration_ms = started.elapsed().as_millis() as u64,
+          message = "tool `source` completed",
+        );
+        Ok(Json(source))
+      }
+      Ok(None) => {
+        tracing::warn!(
+          tool = "source",
+          source_id = %key,
+          duration_ms = started.elapsed().as_millis() as u64,
+          message = "source not found",
+        );
+        Err(ErrorData::internal_error(
+          format!("source `{key}` not found"),
+          None,
+        ))
+      }
+      Err(e) => {
+        tracing::error!(
+          tool = "source",
+          source_id = %key,
+          duration_ms = started.elapsed().as_millis() as u64,
+          error = %e,
+          message = "tool `source` failed",
+        );
+        Err(ErrorData::internal_error(e.to_string(), None))
+      }
+    }
+  }
+
   /// Return the direct children of a task (`parent_id`), or roots when omitted.
   #[tool(
     name = "children",

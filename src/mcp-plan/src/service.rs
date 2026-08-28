@@ -95,6 +95,15 @@ impl Service {
     Ok(models.into_iter().map(SourceOutput::from).collect())
   }
 
+  /// Fetch a single source by id.
+  pub async fn source(&self, id: &str) -> Result<Option<SourceOutput>, ServiceError> {
+    use crate::db::entities::sources;
+    let model = sources::Entity::find_by_id(id.to_owned())
+      .one(&self.db)
+      .await?;
+    Ok(model.map(SourceOutput::from))
+  }
+
   /// Insert each statically configured source that is not already present in
   /// the `sources` table. Existing rows are left untouched so any later user
   /// modifications are preserved. Returns the number of rows inserted.
@@ -875,6 +884,36 @@ mod tests {
       assert_eq!(list[0].title, "A");
       assert_eq!(list[0].source_type, "poll");
       assert_eq!(list[1].id, "b");
+    }
+  }
+
+  #[tokio::test]
+  async fn source_fetches_by_id() {
+    use crate::db::entities::sources;
+    use sea_orm::ActiveValue::Set as SetValue;
+
+    for env in environments().await {
+      let service = &env.service;
+      sources::Entity::insert(sources::ActiveModel {
+        id: SetValue("gh".to_owned()),
+        title: SetValue("GitHub issues".to_owned()),
+        description: SetValue("fetch instructions".to_owned()),
+        source_type: SetValue("poll".to_owned()),
+      })
+      .exec(&service.db)
+      .await
+      .expect("insert gh");
+
+      let found = service.source("gh").await.expect("source");
+      assert!(found.is_some());
+      let source = found.expect("source");
+      assert_eq!(source.id, "gh");
+      assert_eq!(source.title, "GitHub issues");
+      assert_eq!(source.description, "fetch instructions");
+      assert_eq!(source.source_type, "poll");
+
+      let missing = service.source("nope").await.expect("source");
+      assert!(missing.is_none());
     }
   }
 
